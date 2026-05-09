@@ -30,11 +30,13 @@ export function NetworkingFace() {
               {/* short cylinder = a "wire bundle" */}
               <cylinderGeometry args={[0.16, 0.16, 0.3, 24]} />
               <meshStandardMaterial
-                color={isActive ? "#ddd6fe" : meta.color}
-                roughness={0.7}
-                flatShading
+                color={isActive ? "#ffffff" : meta.color}
+                roughness={0.2}
+                metalness={0.8}
+                emissive={isActive ? "#ffffff" : meta.color}
+                emissiveIntensity={isActive ? 1.2 : 0.3}
               />
-              <Edges threshold={15} color="#1f2933" />
+              <Edges threshold={15} color={isActive ? "#ffffff" : "#000000"} />
             </mesh>
           </Interactable>
         );

@@ -27,11 +27,13 @@ export function NodesFace() {
               <mesh position={[0, 0, 0.1]} castShadow>
                 <boxGeometry args={[0.55, 0.5, 0.2]} />
                 <meshStandardMaterial
-                  color={isActive ? "#bfdbfe" : meta.color}
-                  roughness={0.7}
-                  flatShading
+                  color={isActive ? "#ffffff" : meta.color}
+                  roughness={0.2}
+                  metalness={0.8}
+                  emissive={isActive ? "#ffffff" : meta.color}
+                  emissiveIntensity={isActive ? 1.2 : 0.3}
                 />
-                <Edges threshold={15} color="#1f2933" />
+                <Edges threshold={15} color={isActive ? "#ffffff" : "#000000"} />
               </mesh>
               {[0.12, 0, -0.12].map((y, i) => (
                 <mesh key={i} position={[0, y, 0.21]}>

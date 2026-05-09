@@ -55,8 +55,11 @@ export function FaceFrame({ face, children }: Props) {
         <meshStandardMaterial
           color={meta.color}
           transparent
-          opacity={isActive ? 0.35 : hovered ? 0.22 : isDimmed ? 0.04 : 0.12}
-          roughness={1}
+          opacity={isActive ? 0.4 : hovered ? 0.25 : isDimmed ? 0.02 : 0.1}
+          roughness={0.2}
+          metalness={0.5}
+          emissive={meta.color}
+          emissiveIntensity={isActive ? 0.2 : 0.05}
         />
       </mesh>
 
@@ -68,12 +71,12 @@ export function FaceFrame({ face, children }: Props) {
       <group position={[0, 0.82, 0.05]}>
         <Text
           fontSize={0.14}
-          fontWeight={700}
+          fontWeight={800}
           color={meta.color}
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.01}
-          outlineColor="#ffffff"
+          outlineWidth={0.005}
+          outlineColor="#000000"
           fillOpacity={isDimmed ? 0.3 : 1}
           outlineOpacity={isDimmed ? 0.3 : 1}
         >
@@ -81,14 +84,14 @@ export function FaceFrame({ face, children }: Props) {
         </Text>
         <Text
           position={[0, -0.12, 0]}
-          fontSize={0.06}
+          fontSize={0.055}
           fontWeight={400}
-          color={meta.color}
+          color="#94a3b8"
           anchorX="center"
           anchorY="middle"
           fillOpacity={isDimmed ? 0.2 : 0.8}
         >
-          {meta.subtitle}
+          {meta.subtitle.toUpperCase()}
         </Text>
       </group>
 
@@ -101,15 +104,15 @@ export function FaceFrame({ face, children }: Props) {
           <Text
             key={c.id}
             position={[c.position[0], c.position[1], 0.4]}
-            fontSize={0.08}
+            fontSize={0.07}
             fontWeight={600}
-            color={isConceptActive ? "#ffffff" : "#1f2933"}
+            color={isConceptActive ? "#ffffff" : meta.color}
             anchorX="center"
             anchorY="middle"
-            outlineWidth={0.005}
-            outlineColor={isConceptActive ? meta.color : "#ffffff"}
-            fillOpacity={shouldShow ? (isConceptActive ? 1 : 0.7) : 0}
-            outlineOpacity={shouldShow ? (isConceptActive ? 1 : 0.7) : 0}
+            outlineWidth={0.008}
+            outlineColor={isConceptActive ? meta.color : "#000000"}
+            fillOpacity={shouldShow ? (isConceptActive ? 1 : 0.8) : 0}
+            outlineOpacity={shouldShow ? (isConceptActive ? 1 : 0.8) : 0}
             onClick={(e) => {
               if (!interactive) return;
               e.stopPropagation();

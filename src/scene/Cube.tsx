@@ -24,14 +24,21 @@ export function Cube() {
         receiveShadow
         castShadow
       >
-        <meshStandardMaterial color="#e9e4d8" roughness={0.85} flatShading />
+        <meshStandardMaterial 
+          color="#0f172a" 
+          roughness={0.4} 
+          metalness={0.8}
+          emissive="#0ea5e9"
+          emissiveIntensity={0.02}
+        />
       </RoundedBox>
 
       <lineSegments geometry={edges}>
-        <lineBasicMaterial color="#1f2933" opacity={0.15} transparent />
+        <lineBasicMaterial color="#0ea5e9" opacity={0.5} transparent />
       </lineSegments>
 
       <ControlPlaneFace />
+...
       <NodesFace />
       <PodsFace />
       <NetworkingFace />

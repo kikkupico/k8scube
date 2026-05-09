@@ -46,9 +46,9 @@ export function Flow({ flow }: Props) {
       <Line
         points={linePoints}
         color={flow.color}
-        lineWidth={1.6}
+        lineWidth={2.2}
         transparent
-        opacity={0.45}
+        opacity={0.65}
         dashed={false}
       />
       <instancedMesh
@@ -56,12 +56,13 @@ export function Flow({ flow }: Props) {
         args={[undefined, undefined, particleCount]}
         frustumCulled={false}
       >
-        <sphereGeometry args={[0.06, 12, 12]} />
+        <sphereGeometry args={[0.07, 14, 14]} />
         <meshStandardMaterial
-          color={flow.color}
+          color="#ffffff"
           emissive={flow.color}
-          emissiveIntensity={0.6}
-          roughness={0.4}
+          emissiveIntensity={2.5}
+          roughness={0.1}
+          metalness={1}
         />
       </instancedMesh>
     </group>
