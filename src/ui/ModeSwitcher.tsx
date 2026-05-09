@@ -2,7 +2,6 @@ import { useApp, type Mode } from "../state/store";
 
 const MODES: { id: Mode; label: string; available: boolean }[] = [
   { id: "orbit",   label: "Orbit",   available: true  },
-  { id: "scrolly", label: "Scrolly", available: true  },
   { id: "explore", label: "Explore", available: true  },
 ];
 

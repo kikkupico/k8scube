@@ -42,8 +42,8 @@ export function CameraRig() {
     );
   }, [mode, activeFace]);
 
-  // When entering scrolly or explore from another mode, reset to overview so
-  // the user has a known starting point. ScrollyMode then drives further moves.
+  // When entering explore from another mode, reset to overview so
+  // the user has a known starting point.
   useEffect(() => {
     if (mode === "orbit") return;
     const c = ref.current;
@@ -61,7 +61,7 @@ export function CameraRig() {
         ref.current = c;
         setControls(c);
       }}
-      enabled={mode !== "scrolly"}
+      enabled
       minDistance={3}
       maxDistance={14}
       smoothTime={prefersReducedMotion() ? 0 : 0.35}

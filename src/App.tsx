@@ -4,7 +4,6 @@ import { ConceptDrawer } from "./ui/ConceptDrawer";
 import { Legend } from "./ui/Legend";
 import { FlowToggles } from "./ui/FlowToggles";
 import { ResetButton } from "./ui/ResetButton";
-import { ScrollyMode } from "./modes/ScrollyMode";
 import { useApp } from "./state/store";
 
 export function App() {
@@ -15,12 +14,11 @@ export function App() {
       <ModeSwitcher />
       <ResetButton />
       <Legend />
-      {mode === "orbit" && <ConceptDrawer />}
-      {mode === "scrolly" && <ScrollyMode />}
+      <ConceptDrawer />
       {mode === "explore" && <FlowToggles />}
       <header className="title">
-        <h1>k8s cube</h1>
-        <p>a navigable explainer</p>
+        <h1>K8SCUBE</h1>
+        <p>Dynamic Cluster Simulation</p>
       </header>
     </div>
   );

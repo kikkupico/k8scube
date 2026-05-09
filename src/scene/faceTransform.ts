@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import type { FaceId } from "../state/store";
-import { CONCEPTS } from "../content/concepts";
 
 export const FACE_TRANSFORM: Record<
   FaceId,
@@ -34,11 +33,4 @@ export function faceLocalToWorld(
   _m.compose(_v, _q, _s);
   const out = new THREE.Vector3(localX, localY, localZ);
   return out.applyMatrix4(_m);
-}
-
-/** Resolve a concept id to its world-space anchor (slightly above the face). */
-export function conceptWorldPos(id: string, extrudeAbove = 0.2): THREE.Vector3 {
-  const c = CONCEPTS.find((x) => x.id === id);
-  if (!c) throw new Error(`Unknown concept: ${id}`);
-  return faceLocalToWorld(c.face, c.position[0], c.position[1], extrudeAbove);
 }

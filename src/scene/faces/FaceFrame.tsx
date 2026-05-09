@@ -3,23 +3,20 @@ import type { ThreeEvent } from "@react-three/fiber";
 import { Text } from "@react-three/drei";
 import type { FaceId } from "../../state/store";
 import { useApp } from "../../state/store";
-import { conceptsByFace, faceMeta } from "../../content/concepts";
+import { faceMeta } from "../../content/concepts";
 import { FACE_TRANSFORM } from "../faceTransform";
 
 interface Props {
   face: FaceId;
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 export function FaceFrame({ face, children }: Props) {
   const meta = faceMeta(face);
-  const concepts = conceptsByFace(face);
   const { position, rotation } = FACE_TRANSFORM[face];
   const mode = useApp((s) => s.mode);
   const setActiveFace = useApp((s) => s.setActiveFace);
-  const setActiveConcept = useApp((s) => s.setActiveConcept);
   const activeFace = useApp((s) => s.activeFace);
-  const activeConcept = useApp((s) => s.activeConcept);
   const [hovered, setHovered] = useState(false);
 
   const isActive = activeFace === face;
@@ -94,45 +91,6 @@ export function FaceFrame({ face, children }: Props) {
           {meta.subtitle.toUpperCase()}
         </Text>
       </group>
-
-      {/* per-concept labels — 3D text, always visible but prominent when active */}
-      {concepts.map((c) => {
-        const isConceptActive = activeConcept === c.id;
-        const shouldShow = isActive || (!activeFace && !isDimmed);
-        
-        return (
-          <Text
-            key={c.id}
-            position={[c.position[0], c.position[1], 0.4]}
-            fontSize={0.07}
-            fontWeight={600}
-            color={isConceptActive ? "#ffffff" : meta.color}
-            anchorX="center"
-            anchorY="middle"
-            outlineWidth={0.008}
-            outlineColor={isConceptActive ? meta.color : "#000000"}
-            fillOpacity={shouldShow ? (isConceptActive ? 1 : 0.8) : 0}
-            outlineOpacity={shouldShow ? (isConceptActive ? 1 : 0.8) : 0}
-            onClick={(e) => {
-              if (!interactive) return;
-              e.stopPropagation();
-              setActiveFace(face);
-              setActiveConcept(c.id);
-            }}
-            onPointerOver={(e) => {
-              if (!interactive) return;
-              e.stopPropagation();
-              document.body.style.cursor = "pointer";
-            }}
-            onPointerOut={() => {
-              if (!interactive) return;
-              document.body.style.cursor = "default";
-            }}
-          >
-            {c.title}
-          </Text>
-        );
-      })}
     </group>
   );
 }
