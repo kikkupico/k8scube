@@ -609,6 +609,28 @@ canvas { outline: none; }
 }
 .time-reset:hover { color: #ef4444 !important; border-color: #ef4444 !important; }
 
+.time-nodes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+.time-nodes-label {
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+  margin-right: 4px;
+}
+.time-nodes button {
+  width: 22px;
+  padding: 4px 0;
+  font-size: 14px;
+  color: var(--accent);
+}
+.time-nodes button:disabled { color: #1e293b; cursor: default; }
+
 /* ---------- scenarios ---------- */
 
 .scenarios {

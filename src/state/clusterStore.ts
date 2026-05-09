@@ -153,6 +153,17 @@ export interface K8sNamespace {
   color: string;
 }
 
+export interface K8sEgressTarget {
+  id: string;
+  /** friendly name e.g. "stripe-api" */
+  name: string;
+  /** external host e.g. "api.stripe.com" */
+  host: string;
+  protocol: "https" | "tcp" | "grpc";
+  /** deployment names that depend on this external service */
+  usedBy: string[];
+}
+
 export interface ClusterEvent {
   id: string;
   at: number;
@@ -185,7 +196,13 @@ export type Action =
   | { type: "DeleteIngress"; name: string; namespace?: string }
   // foundations
   | { type: "CreateNamespace"; name: string; color?: string }
-  | { type: "DeleteNamespace"; name: string };
+  | { type: "DeleteNamespace"; name: string }
+  // nodes
+  | { type: "CreateNode"; name?: string }
+  | { type: "DeleteNode"; name: string }
+  // egress targets
+  | { type: "ApplyEgressTarget"; spec: EgressTargetSpec }
+  | { type: "DeleteEgressTarget"; name: string };
 
 export interface DeploymentSpec {
   name: string;
@@ -202,6 +219,7 @@ export interface PVCSpec { name: string; namespace?: string; capacityGi: number;
 export interface ConfigSpec { name: string; namespace?: string; data: Record<string, string> }
 export interface ServiceSpec { name: string; namespace?: string; type?: K8sService["type"]; deploymentName: string }
 export interface IngressSpec { name: string; namespace?: string; host: string; serviceName: string }
+export interface EgressTargetSpec { name: string; host: string; protocol?: "https" | "tcp" | "grpc"; usedBy?: string[] }
 
 // ---------- Helpers ----------
 
@@ -258,6 +276,7 @@ interface ClusterState {
   pods: K8sPod[];
   services: K8sService[];
   ingresses: K8sIngress[];
+  egressTargets: K8sEgressTarget[];
   pvs: K8sPV[];
   pvcs: K8sPVC[];
   configMaps: K8sConfigMap[];
@@ -283,6 +302,7 @@ export interface ClusterSnapshot {
   pods: K8sPod[];
   services: K8sService[];
   ingresses: K8sIngress[];
+  egressTargets: K8sEgressTarget[];
   pvs: K8sPV[];
   pvcs: K8sPVC[];
   configMaps: K8sConfigMap[];
@@ -401,6 +421,11 @@ function seedCluster(): ClusterSnapshot {
     { id: "ing-web", name: "web", namespace: "default", host: "k8scube.local", serviceName: "frontend-svc" },
   ];
 
+  const egressTargets: K8sEgressTarget[] = [
+    { id: "eg-stripe", name: "stripe-api", host: "api.stripe.com", protocol: "https", usedBy: ["backend"] },
+    { id: "eg-s3",     name: "object-store", host: "s3.amazonaws.com", protocol: "https", usedBy: ["backend"] },
+  ];
+
   const pvs: K8sPV[] = [
     { id: "pv-1", name: "pv-fast-10gi", capacityGi: 10, storageClass: "fast", status: "Bound", boundClaim: "pvc-data" },
     { id: "pv-2", name: "pv-bulk-50gi", capacityGi: 50, storageClass: "bulk", status: "Available", boundClaim: null },
@@ -420,7 +445,7 @@ function seedCluster(): ClusterSnapshot {
     { id: "sec-db", name: "db-creds", namespace: "apps", data: { user: "***", pass: "***" } },
   ];
 
-  return { nodes, namespaces, deployments, replicaSets, pods, services, ingresses, pvs, pvcs, configMaps, secrets, events: [] };
+  return { nodes, namespaces, deployments, replicaSets, pods, services, ingresses, egressTargets, pvs, pvcs, configMaps, secrets, events: [] };
 }
 
 const SEED = seedCluster();
@@ -437,6 +462,7 @@ export const useCluster = create<ClusterState>((set) => ({
   pods: SEED.pods,
   services: SEED.services,
   ingresses: SEED.ingresses,
+  egressTargets: SEED.egressTargets,
   pvs: SEED.pvs,
   pvcs: SEED.pvcs,
   configMaps: SEED.configMaps,

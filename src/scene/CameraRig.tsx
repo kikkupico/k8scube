@@ -6,12 +6,12 @@ import { useApp } from "../state/store";
 import { useRig } from "../state/rigStore";
 
 const FACE_VIEW: Record<FaceId, { eye: [number, number, number]; look: [number, number, number] }> = {
-  "control-plane": { eye: [0,  4.4,  0.001], look: [0, 0, 0] },
+  "edge":        { eye: [0,  4.4,  0.001], look: [0, 0, 0] },
   "nodes":         { eye: [0,  0.6,  4.2],   look: [0, 0, 0] },
   "pods":          { eye: [4.2, 0.6,  0],    look: [0, 0, 0] },
   "networking":    { eye: [-4.2, 0.6, 0],    look: [0, 0, 0] },
   "storage":       { eye: [0,  0.6, -4.2],   look: [0, 0, 0] },
-  "foundations":   { eye: [0, -4.4,  0.001], look: [0, 0, 0] },
+  "control-plane": { eye: [0, -4.4,  0.001], look: [0, 0, 0] },
 };
 
 export const HOME_VIEW = {

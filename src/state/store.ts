@@ -3,12 +3,12 @@ import { create } from "zustand";
 export type Mode = "orbit" | "explore";
 
 export type FaceId =
-  | "control-plane"
+  | "edge"
   | "nodes"
   | "pods"
   | "networking"
   | "storage"
-  | "foundations";
+  | "control-plane";
 
 export interface AppState {
   mode: Mode;

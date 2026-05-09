@@ -6,15 +6,15 @@ import { NodesFace } from "./faces/NodesFace";
 import { PodsFace } from "./faces/PodsFace";
 import { NetworkingFace } from "./faces/NetworkingFace";
 import { StorageFace } from "./faces/StorageFace";
-import { FoundationsFace } from "./faces/FoundationsFace";
+import { EdgeFace } from "./faces/EdgeFace";
 import { useCluster } from "../state/clusterStore";
 import { computeSliceLayout, SLAB_DEPTH, SLAB_WIDTH } from "./sliceLayout";
 
 /**
- * Cube root. The cube body is now a vertical stack of slabs:
- *   - top: control-plane slab
+ * Cube root. The cube body is a vertical stack of slabs:
+ *   - top: egress / user-app entry
  *   - middle: one slab per worker node (driven by current cluster state)
- *   - bottom: foundations base
+ *   - bottom: control plane (the brain)
  *
  * Each Y band is shared between Nodes face (front) and Pods face (right),
  * so a pod scheduled on worker-K appears in slab K on both faces.
@@ -26,8 +26,8 @@ export function Cube() {
 
   return (
     <group>
-      {/* Control-plane slab (top) */}
-      <Slab y={layout.controlPlane.y} h={layout.controlPlane.h} accent="#f59e0b" emissive={0.15} label="cp" />
+      {/* Edge slab (top) — cluster boundary */}
+      <Slab y={layout.edge.y} h={layout.edge.h} accent="#22d3ee" emissive={0.18} />
 
       {/* Worker slabs */}
       {layout.workers.map((rect, i) => {
@@ -39,20 +39,19 @@ export function Cube() {
         );
       })}
 
-      {/* Foundations base */}
-      <Slab y={layout.foundations.y} h={layout.foundations.h} accent="#64748b" emissive={0.08} />
+      {/* Control-plane slab (bottom) */}
+      <Slab y={layout.controlPlane.y} h={layout.controlPlane.h} accent="#f59e0b" emissive={0.18} />
 
       {/* Corner rack rails — vertical pillars connecting all slabs */}
       <RackRails layout={layout} />
 
-      {/* Faces — placed at full cube extent. Each face's content positions
-          its props using the same slab Ys via computeSliceLayout. */}
-      <ControlPlaneFace />
+      {/* Faces */}
+      <EdgeFace />
       <NodesFace />
       <PodsFace />
       <NetworkingFace />
       <StorageFace />
-      <FoundationsFace />
+      <ControlPlaneFace />
     </group>
   );
 }
@@ -62,7 +61,6 @@ interface SlabProps {
   h: number;
   accent: string;
   emissive: number;
-  label?: string;
 }
 
 function Slab({ y, h, accent, emissive }: SlabProps) {
@@ -78,7 +76,6 @@ function Slab({ y, h, accent, emissive }: SlabProps) {
         />
         <Edges threshold={20} color={accent} />
       </RoundedBox>
-      {/* Inner panel halo (subtle) */}
       <mesh position={[0, 0, 0]}>
         <boxGeometry args={[SLAB_WIDTH * 0.998, h * 0.999, SLAB_DEPTH * 0.998]} />
         <meshBasicMaterial color={accent} transparent opacity={0.04} />
@@ -88,10 +85,8 @@ function Slab({ y, h, accent, emissive }: SlabProps) {
 }
 
 function RackRails({ layout }: { layout: ReturnType<typeof computeSliceLayout> }) {
-  // Compute total span from foundations bottom to CP top, then render four
-  // pillars at the four corners of the cube footprint.
-  const top = layout.controlPlane.y + layout.controlPlane.h / 2;
-  const bottom = layout.foundations.y - layout.foundations.h / 2;
+  const top = layout.edge.y + layout.edge.h / 2;
+  const bottom = layout.controlPlane.y - layout.controlPlane.h / 2;
   const railH = top - bottom;
   const cy = (top + bottom) / 2;
   const halfW = SLAB_WIDTH / 2 + 0.005;
@@ -105,7 +100,6 @@ function RackRails({ layout }: { layout: ReturnType<typeof computeSliceLayout> }
     [+halfW, +halfD],
   ];
 
-  // Use shared geometry for the four pillars
   const railGeo = useMemo(() => new THREE.BoxGeometry(0.025, railH, 0.025), [railH]);
 
   return (

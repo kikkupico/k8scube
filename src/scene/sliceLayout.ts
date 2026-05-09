@@ -1,8 +1,8 @@
 /**
  * Cube slicing — the cube body is a vertical stack of slabs:
- *   top: control plane
+ *   top: edge / user-app entry
  *   middle: one slab per worker node (driven by current cluster state)
- *   bottom: foundations base
+ *   bottom: control plane (the brain)
  *
  * The same slab Y is used by:
  *   - the cube body geometry (Cube.tsx)
@@ -22,48 +22,46 @@ export interface SliceRect {
 }
 
 export interface SliceLayout {
-  controlPlane: SliceRect;
+  edge: SliceRect;
   workers: SliceRect[];
-  foundations: SliceRect;
+  controlPlane: SliceRect;
 }
 
 const CUBE_HALF = 1.0;
-const TOP_PADDING = 0.04;       // gap above control plane
-const BOTTOM_PADDING = 0.04;    // gap below foundations base
-const FOUND_HEIGHT = 0.14;
+const TOP_PADDING = 0.04;
+const BOTTOM_PADDING = 0.04;
+const EDGE_HEIGHT = 0.36;
 const CP_HEIGHT = 0.36;
 const SLAB_GAP = 0.05;
-const STACK_GAP = 0.08;         // gap between control-plane slab and worker stack
-const FOUND_GAP = 0.05;         // gap between worker stack and foundations base
+const STACK_GAP = 0.08;
 
 export function computeSliceLayout(workerCount: number): SliceLayout {
-  const cpTop = CUBE_HALF - TOP_PADDING;
-  const cpY = cpTop - CP_HEIGHT / 2;
-  const cpBottom = cpTop - CP_HEIGHT;
+  const edgeTop = CUBE_HALF - TOP_PADDING;
+  const edgeY = edgeTop - EDGE_HEIGHT / 2;
+  const edgeBottom = edgeTop - EDGE_HEIGHT;
 
-  const foundBottom = -CUBE_HALF + BOTTOM_PADDING;
-  const foundY = foundBottom + FOUND_HEIGHT / 2;
-  const foundTop = foundBottom + FOUND_HEIGHT;
+  const cpBottom = -CUBE_HALF + BOTTOM_PADDING;
+  const cpY = cpBottom + CP_HEIGHT / 2;
+  const cpTop = cpBottom + CP_HEIGHT;
 
-  const stackTop = cpBottom - STACK_GAP;
-  const stackBottom = foundTop + FOUND_GAP;
+  const stackTop = edgeBottom - STACK_GAP;
+  const stackBottom = cpTop + STACK_GAP;
   const span = Math.max(0.1, stackTop - stackBottom);
 
   const n = Math.max(1, workerCount);
   const totalGaps = (n - 1) * SLAB_GAP;
   const slabH = Math.max(0.08, (span - totalGaps) / n);
 
-  // workers ordered top-down (index 0 = topmost, since the array order
-  // typically matches node-1, node-2, node-3 — top-down feels natural).
+  // workers ordered top-down (index 0 = topmost)
   const workers: SliceRect[] = Array.from({ length: n }, (_, i) => {
     const top = stackTop - i * (slabH + SLAB_GAP);
     return { y: top - slabH / 2, h: slabH };
   });
 
   return {
-    controlPlane: { y: cpY, h: CP_HEIGHT },
+    edge: { y: edgeY, h: EDGE_HEIGHT },
     workers,
-    foundations: { y: foundY, h: FOUND_HEIGHT },
+    controlPlane: { y: cpY, h: CP_HEIGHT },
   };
 }
 

@@ -4,6 +4,7 @@ import type {
   ClusterSnapshot,
   K8sConfigMap,
   K8sDeployment,
+  K8sEgressTarget,
   K8sIngress,
   K8sNamespace,
   K8sNode,
@@ -43,6 +44,7 @@ export function step(prev: EngineState): EngineState {
     pods: prev.pods.map((p) => ({ ...p, volumes: [...p.volumes] })),
     services: prev.services.map((sv) => ({ ...sv, endpoints: [...sv.endpoints] })),
     ingresses: prev.ingresses.map((i) => ({ ...i })),
+    egressTargets: prev.egressTargets.map((e) => ({ ...e, usedBy: [...e.usedBy] })),
     pvs: prev.pvs.map((v) => ({ ...v })),
     pvcs: prev.pvcs.map((c) => ({ ...c })),
     configMaps: prev.configMaps.map((c) => ({ ...c })),
@@ -397,6 +399,53 @@ function applyAction(s: EngineState, a: Action): EngineState {
       s.secrets = s.secrets.filter((c) => c.namespace !== a.name);
       s.namespaces = s.namespaces.filter((n) => n.id !== ns.id);
       return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "Namespace", name: ns.name, id: ns.id }, message: `namespace removed (cascading)` });
+    }
+    // -------- nodes --------
+    case "CreateNode": {
+      const existingWorkers = s.nodes.filter((n) => n.role === "worker");
+      const idx = existingWorkers.length + 1;
+      const name = a.name ?? `worker-node-${idx}`;
+      if (s.nodes.find((n) => n.name === name)) return s;
+      const node: K8sNode = { id: nextId("node"), name, role: "worker", status: "Ready" };
+      s.nodes.push(node);
+      return emit(s, { type: "Normal", reason: "NodeReady", involvedObject: { kind: "Node", name: node.name, id: node.id }, message: `joined the cluster` });
+    }
+    case "DeleteNode": {
+      const n = s.nodes.find((x) => x.name === a.name && x.role === "worker");
+      if (!n) return emit(s, { type: "Warning", reason: "NotFound", involvedObject: { kind: "Node", name: a.name, id: a.name }, message: `worker ${a.name} not found` });
+      for (const p of s.pods) {
+        if (p.nodeId === n.id && p.phase !== "Terminating") {
+          p.phase = "Terminating";
+          p.terminationTicks = 1;
+        }
+      }
+      s.nodes = s.nodes.filter((x) => x.id !== n.id);
+      return emit(s, { type: "Normal", reason: "NodeRemoved", involvedObject: { kind: "Node", name: n.name, id: n.id }, message: `node removed` });
+    }
+    // -------- egress targets --------
+    case "ApplyEgressTarget": {
+      const existing = s.egressTargets.find((e) => e.name === a.spec.name);
+      if (existing) {
+        existing.host = a.spec.host;
+        if (a.spec.protocol) existing.protocol = a.spec.protocol;
+        if (a.spec.usedBy) existing.usedBy = a.spec.usedBy;
+        return emit(s, { type: "Normal", reason: "Applied", involvedObject: { kind: "EgressTarget", name: existing.name, id: existing.id }, message: `host ${existing.host}` });
+      }
+      const eg: K8sEgressTarget = {
+        id: nextId("eg"),
+        name: a.spec.name,
+        host: a.spec.host,
+        protocol: a.spec.protocol ?? "https",
+        usedBy: a.spec.usedBy ?? [],
+      };
+      s.egressTargets.push(eg);
+      return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "EgressTarget", name: eg.name, id: eg.id }, message: `${eg.protocol}://${eg.host}` });
+    }
+    case "DeleteEgressTarget": {
+      const eg = s.egressTargets.find((e) => e.name === a.name);
+      if (!eg) return s;
+      s.egressTargets = s.egressTargets.filter((x) => x.id !== eg.id);
+      return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "EgressTarget", name: eg.name, id: eg.id }, message: `removed` });
     }
   }
 }

@@ -11,7 +11,7 @@ export interface KubectlOutput {
 
 const help = [
   "kubectl supports (in this simulator):",
-  "  get [pods|nodes|deployments|services|rs|events|pv|pvc|cm|secret|ingress|ns] [-w] [-n NAMESPACE | -A]",
+  "  get [pods|nodes|deployments|services|rs|events|pv|pvc|cm|secret|ingress|egress|ns] [-w] [-n NAMESPACE | -A]",
   "  describe pod NAME [-n NAMESPACE]",
   "  delete pod|deployment|pvc|svc|ingress NAME [-n NAMESPACE]",
   "  scale deployment NAME --replicas=N [-n NAMESPACE]",
@@ -22,6 +22,8 @@ const help = [
   "  drain|cordon|uncordon node NAME",
   "  create namespace NAME",
   "  delete namespace NAME",
+  "  create node [NAME]   (joins a new worker)",
+  "  delete node NAME     (evicts pods + removes worker)",
   "  scenario list | scenario run NAME",
 ];
 
@@ -43,6 +45,12 @@ const PRESETS: Record<string, () => Action[]> = {
   web: () => [
     { type: "ApplyService", spec: { name: "frontend-svc", deploymentName: "frontend", type: "LoadBalancer" } },
     { type: "ApplyIngress", spec: { name: "web", host: "k8scube.local", serviceName: "frontend-svc" } },
+  ],
+  payments: () => [
+    { type: "ApplyEgressTarget", spec: { name: "stripe-api", host: "api.stripe.com", protocol: "https", usedBy: ["backend"] } },
+  ],
+  observability: () => [
+    { type: "ApplyEgressTarget", spec: { name: "datadog", host: "agent.datadoghq.com", protocol: "https", usedBy: ["backend", "frontend"] } },
   ],
 };
 
@@ -178,6 +186,12 @@ function renderIngresses(s: ClusterSnapshot, scope: NsScope): string[] {
   return [header, ...rows];
 }
 
+function renderEgressTargets(s: ClusterSnapshot): string[] {
+  const header = `${pad("NAME", 18)} ${pad("HOST", 28)} ${pad("PROTO", 8)} USED BY`;
+  const rows = s.egressTargets.map((e) => `${pad(e.name, 18)} ${pad(e.host, 28)} ${pad(e.protocol, 8)} ${e.usedBy.join(", ") || "-"}`);
+  return [header, ...rows];
+}
+
 function renderNamespaces(s: ClusterSnapshot): string[] {
   const header = `${pad("NAME", 18)} POD COUNT  DEPLOY COUNT  SVC COUNT`;
   const rows = s.namespaces.map((n) => {
@@ -240,6 +254,9 @@ export function parseKubectl(
         case "secrets": return renderSecrets(snap, scope);
         case "ingress":
         case "ing": return renderIngresses(snap, scope);
+        case "egress":
+        case "egresstargets":
+        case "et": return renderEgressTargets(snap);
         case "ns":
         case "namespace":
         case "namespaces": return renderNamespaces(snap);
@@ -293,6 +310,8 @@ export function parseKubectl(
     if (kind === "svc" || kind === "service")        return { lines: [`service "${name}" deletion requested`], actions: [{ type: "DeleteService", name, namespace: ns }] };
     if (kind === "ingress" || kind === "ing")        return { lines: [`ingress "${name}" deletion requested`], actions: [{ type: "DeleteIngress", name, namespace: ns }] };
     if (kind === "namespace" || kind === "ns")       return { lines: [`namespace "${name}" deletion requested`], actions: [{ type: "DeleteNamespace", name }] };
+    if (kind === "node" || kind === "no")            return { lines: [`node "${name}" deletion requested`], actions: [{ type: "DeleteNode", name }] };
+    if (kind === "egress" || kind === "et")          return { lines: [`egress target "${name}" deletion requested`], actions: [{ type: "DeleteEgressTarget", name }] };
     return { lines: [`cannot delete ${kind}`], actions: [] };
   }
 
@@ -377,6 +396,9 @@ export function parseKubectl(
     if (kind === "namespace" || kind === "ns") {
       if (!name) return { lines: ["usage: create namespace NAME"], actions: [] };
       return { lines: [`namespace/${name} created`], actions: [{ type: "CreateNamespace", name }] };
+    }
+    if (kind === "node" || kind === "no") {
+      return { lines: [`node/${name ?? "(auto)"} joining cluster`], actions: [{ type: "CreateNode", name }] };
     }
     if (kind === "service" || kind === "svc") {
       if (!name) return { lines: ["usage: create service NAME --tcp=PORT --selector=DEPLOY"], actions: [] };

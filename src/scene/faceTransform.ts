@@ -5,12 +5,12 @@ export const FACE_TRANSFORM: Record<
   FaceId,
   { position: [number, number, number]; rotation: [number, number, number] }
 > = {
-  "control-plane": { position: [0,  1, 0],  rotation: [-Math.PI / 2, 0, 0] },
+  "edge":        { position: [0,  1, 0],  rotation: [-Math.PI / 2, 0, 0] },
   "nodes":         { position: [0,  0, 1],  rotation: [0, 0, 0] },
   "pods":          { position: [1,  0, 0],  rotation: [0,  Math.PI / 2, 0] },
   "networking":    { position: [-1, 0, 0],  rotation: [0, -Math.PI / 2, 0] },
   "storage":       { position: [0,  0, -1], rotation: [0,  Math.PI, 0] },
-  "foundations":   { position: [0, -1, 0],  rotation: [ Math.PI / 2, 0, 0] },
+  "control-plane": { position: [0, -1, 0],  rotation: [ Math.PI / 2, 0, 0] },
 };
 
 const _v = new THREE.Vector3();

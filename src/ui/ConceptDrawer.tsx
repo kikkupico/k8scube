@@ -14,6 +14,7 @@ export function ConceptDrawer() {
   const pods = useCluster((s) => s.pods);
   const services = useCluster((s) => s.services);
   const ingresses = useCluster((s) => s.ingresses);
+  const egressTargets = useCluster((s) => s.egressTargets);
   const deployments = useCluster((s) => s.deployments);
   const replicaSets = useCluster((s) => s.replicaSets);
   const pvs = useCluster((s) => s.pvs);
@@ -29,6 +30,7 @@ export function ConceptDrawer() {
   const selectedNode = useMemo(() => nodes.find((n) => n.id === activeEntityId), [nodes, activeEntityId]);
   const selectedSvc = useMemo(() => services.find((s) => s.id === activeEntityId), [services, activeEntityId]);
   const selectedIngress = useMemo(() => ingresses.find((i) => i.id === activeEntityId), [ingresses, activeEntityId]);
+  const selectedEgress = useMemo(() => egressTargets.find((e) => e.id === activeEntityId), [egressTargets, activeEntityId]);
   const selectedPv = useMemo(() => pvs.find((v) => v.id === activeEntityId), [pvs, activeEntityId]);
   const selectedPvc = useMemo(() => pvcs.find((c) => c.id === activeEntityId), [pvcs, activeEntityId]);
   const selectedCm = useMemo(() => configMaps.find((c) => c.id === activeEntityId), [configMaps, activeEntityId]);
@@ -37,15 +39,15 @@ export function ConceptDrawer() {
 
   const faceEntities = useMemo(() => {
     if (activeFace === "nodes") return nodes.filter((n) => n.role === "worker");
-    if (activeFace === "control-plane") return nodes.filter((n) => n.role === "control-plane");
+    if (activeFace === "control-plane") return [...nodes.filter((n) => n.role === "control-plane"), ...namespaces];
     if (activeFace === "networking") return [...services, ...ingresses];
     if (activeFace === "storage") return [...pvs, ...pvcs, ...configMaps, ...secrets];
-    if (activeFace === "foundations") return namespaces;
+    if (activeFace === "edge") return [...ingresses, ...egressTargets];
     return [];
-  }, [activeFace, nodes, services, ingresses, pvs, pvcs, configMaps, secrets, namespaces]);
+  }, [activeFace, nodes, services, ingresses, egressTargets, pvs, pvcs, configMaps, secrets, namespaces]);
 
   const selectedEntity =
-    selectedPod ?? selectedNode ?? selectedSvc ?? selectedIngress ??
+    selectedPod ?? selectedNode ?? selectedSvc ?? selectedIngress ?? selectedEgress ??
     selectedPv ?? selectedPvc ?? selectedCm ?? selectedSecret ?? selectedNs ?? null;
 
   return (
@@ -85,7 +87,7 @@ export function ConceptDrawer() {
 
                   {selectedPod && <>
                     <p><strong>Phase:</strong> <span className={`status status-${selectedPod.phase}`}>{selectedPod.phase}</span>{selectedPod.pendingReason ? ` (${selectedPod.pendingReason})` : ""}</p>
-                    <p><strong>Namespace:</strong> <button className="xref" onClick={() => { const ns = namespaces.find((n) => n.name === selectedPod.namespace); if (ns) { setActiveFace("foundations"); setActiveEntity(ns.id); } }}>{selectedPod.namespace}</button></p>
+                    <p><strong>Namespace:</strong> <button className="xref" onClick={() => { const ns = namespaces.find((n) => n.name === selectedPod.namespace); if (ns) { setActiveFace("control-plane"); setActiveEntity(ns.id); } }}>{selectedPod.namespace}</button></p>
                     <p><strong>Node:</strong> {selectedPod.nodeId ? <button className="xref" onClick={() => { setActiveFace("nodes"); setActiveEntity(selectedPod.nodeId!); }}>{nodes.find((n) => n.id === selectedPod.nodeId)?.name}</button> : "<unscheduled>"}</p>
                     <p><strong>Deployment:</strong> {deployments.find((d) => d.id === selectedPod.deploymentId)?.name ?? "-"}</p>
                     <p><strong>Image:</strong> {selectedPod.containers[0]?.image ?? "-"}</p>
@@ -133,6 +135,28 @@ export function ConceptDrawer() {
                     </ul>
                     <div className="entity-actions">
                       <button onClick={() => enqueue({ type: "DeleteService", name: selectedSvc.name, namespace: selectedSvc.namespace })}>Delete service</button>
+                    </div>
+                  </>}
+
+                  {selectedEgress && <>
+                    <p><strong>Host:</strong> {selectedEgress.host}</p>
+                    <p><strong>Protocol:</strong> {selectedEgress.protocol}</p>
+                    <p><strong>Used by:</strong></p>
+                    <ul className="endpoint-list">
+                      {selectedEgress.usedBy.length === 0 && <li>(no consumers)</li>}
+                      {selectedEgress.usedBy.map((d) => {
+                        const dep = deployments.find((x) => x.name === d);
+                        return (
+                          <li key={d}>
+                            <button className="xref" onClick={() => { setActiveFace("pods"); if (dep) { /* deployment cards live on pods face */ } }}>
+                              deployment/{d}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="entity-actions">
+                      <button onClick={() => enqueue({ type: "DeleteEgressTarget", name: selectedEgress.name })}>Delete egress target</button>
                     </div>
                   </>}
 

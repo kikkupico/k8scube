@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useCluster } from "../state/clusterStore";
 import { stepOnce } from "../sim/SimRunner";
 
@@ -10,6 +11,9 @@ export function TimeControls() {
   const setPaused = useCluster((s) => s.setPaused);
   const setSpeed = useCluster((s) => s.setSpeed);
   const reset = useCluster((s) => s.resetCluster);
+  const enqueue = useCluster((s) => s.enqueue);
+  const nodes = useCluster((s) => s.nodes);
+  const workers = useMemo(() => nodes.filter((n) => n.role === "worker"), [nodes]);
 
   return (
     <div className="time-controls">
@@ -28,6 +32,18 @@ export function TimeControls() {
             {s}×
           </button>
         ))}
+      </div>
+      <div className="time-nodes">
+        <span className="time-nodes-label">NODES {workers.length}</span>
+        <button onClick={() => enqueue({ type: "CreateNode" })} title="Add a worker node">+</button>
+        <button
+          onClick={() => {
+            const last = workers[workers.length - 1];
+            if (last) enqueue({ type: "DeleteNode", name: last.name });
+          }}
+          disabled={workers.length <= 1}
+          title="Remove the last worker (evicts its pods)"
+        >−</button>
       </div>
       <button className="time-reset" onClick={() => reset()} title="Reset cluster">RESET</button>
     </div>
