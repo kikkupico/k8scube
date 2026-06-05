@@ -59,7 +59,7 @@ interface ParticleProps {
   progress: number;
 }
 
-function PodFlightParticle({ color, from, via, to, progress }: ParticleProps) {
+function PodFlightParticle({ color: _color, from, via, to, progress }: ParticleProps) {
   const meshRef = useRef<THREE.Mesh>(null);
   const trailRef = useRef<THREE.Mesh>(null);
 
@@ -85,11 +85,11 @@ function PodFlightParticle({ color, from, via, to, progress }: ParticleProps) {
     <group>
       <mesh ref={trailRef}>
         <sphereGeometry args={[0.05, 10, 10]} />
-        <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.5} transparent opacity={0.5} />
+        <meshBasicMaterial color="#888888" transparent opacity={0.4} />
       </mesh>
       <mesh ref={meshRef}>
         <sphereGeometry args={[0.07, 12, 12]} />
-        <meshStandardMaterial color={"#ffffff"} emissive={color} emissiveIntensity={3} />
+        <meshBasicMaterial color="#000000" />
       </mesh>
     </group>
   );

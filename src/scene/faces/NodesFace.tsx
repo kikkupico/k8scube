@@ -1,7 +1,7 @@
 import { useMemo } from "react";
-import { Text } from "@react-three/drei";
+import { Edges, Text } from "@react-three/drei";
 import { FaceFrame } from "./FaceFrame";
-import { useCluster } from "../../state/clusterStore";
+import { useCluster, DEFAULT_REQUESTS, type K8sPod } from "../../state/clusterStore";
 import { useApp } from "../../state/store";
 import { Interactable } from "../Interactable";
 import { faceMeta } from "../../content/concepts";
@@ -10,6 +10,39 @@ import { computeSliceLayout } from "../sliceLayout";
 
 const RACK_WIDTH = 1.7;
 const UNIT_GAP = 0.018;
+const BAR_W = 0.5;
+
+/** A thin emissive utilisation bar (background + fill that reddens as it saturates). */
+function CapacityBar({ label, frac, y }: { label: string; frac: number; y: number }) {
+  const f = Math.max(0, Math.min(1, frac));
+  return (
+    <group position={[RACK_WIDTH / 2 + 0.16, y, 0.06]}>
+      <Text fontSize={0.035} fontWeight={700} color="#000000" anchorX="left" anchorY="middle" position={[0, 0.035, 0]} outlineWidth={0.002} outlineColor="#ffffff">
+        {label} {Math.round(f * 100)}%
+      </Text>
+      <mesh position={[BAR_W / 2, 0, 0]}>
+        <planeGeometry args={[BAR_W, 0.024]} />
+        <meshBasicMaterial color="#ffffff" />
+        <Edges threshold={20} color="#000000" />
+      </mesh>
+      {f > 0 && (
+        <mesh position={[(BAR_W * f) / 2, 0, 0.002]}>
+          <planeGeometry args={[BAR_W * f, 0.024]} />
+          <meshBasicMaterial color="#000000" />
+        </mesh>
+      )}
+    </group>
+  );
+}
+
+function allocFrac(pods: K8sPod[], nodeId: string, capCpu: number, capMem: number) {
+  let cpu = 0, mem = 0;
+  for (const p of pods) {
+    if (p.nodeId !== nodeId || p.phase === "Terminating") continue;
+    for (const c of p.containers) { const r = c.requests ?? DEFAULT_REQUESTS; cpu += r.cpu; mem += r.mem; }
+  }
+  return { cpu: cpu / capCpu, mem: mem / capMem };
+}
 
 export function NodesFace() {
   const nodes = useCluster((s) => s.nodes);
@@ -70,25 +103,39 @@ export function NodesFace() {
             <group position={[-RACK_WIDTH / 2 - 0.08, slab.y, 0.05]}>
               <Text
                 fontSize={0.05}
-                fontWeight={700}
-                color={isActive ? "#ffffff" : edgeColor}
+                fontWeight={800}
+                color="#000000"
                 anchorX="right"
                 anchorY="middle"
-                outlineWidth={0.003}
-                outlineColor="#000000"
+                outlineWidth={0.004}
+                outlineColor="#ffffff"
               >
                 {node.name.toUpperCase()}
               </Text>
               <Text
                 position={[0, -0.06, 0]}
                 fontSize={0.034}
-                color="#94a3b8"
+                fontWeight={700}
+                color="#555555"
                 anchorX="right"
                 anchorY="middle"
+                outlineWidth={0.002}
+                outlineColor="#ffffff"
               >
                 {node.status.toUpperCase()} · {podCount} POD{podCount === 1 ? "" : "S"}
               </Text>
             </group>
+
+            {/* CPU / MEM utilisation bars on the right edge */}
+            {(() => {
+              const frac = allocFrac(pods, node.id, node.capacity.cpu, node.capacity.mem);
+              return (
+                <>
+                  <CapacityBar label="CPU" frac={frac.cpu} y={slab.y + 0.05} />
+                  <CapacityBar label="MEM" frac={frac.mem} y={slab.y - 0.05} />
+                </>
+              );
+            })()}
           </group>
         );
       })}

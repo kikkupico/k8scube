@@ -3,7 +3,11 @@ import type {
   ClusterEvent,
   ClusterSnapshot,
   K8sConfigMap,
+  K8sCronJob,
+  K8sDaemonSet,
   K8sDeployment,
+  K8sHPA,
+  K8sJob,
   K8sEgressTarget,
   K8sIngress,
   K8sNamespace,
@@ -16,11 +20,14 @@ import type {
   PodPhase,
 } from "../state/clusterStore";
 import {
+  DEFAULT_NODE_CAPACITY,
   DEFAULT_NS,
+  DEFAULT_REQUESTS,
   NS_PALETTE,
   nextId,
   podNameFor,
   templateHashFor,
+  type Resources,
 } from "../state/clusterStore";
 
 // ---------- Engine state shape (subset of ClusterState) ----------
@@ -41,7 +48,11 @@ export function step(prev: EngineState): EngineState {
     namespaces: [...prev.namespaces],
     deployments: prev.deployments.map((d) => ({ ...d })),
     replicaSets: prev.replicaSets.map((r) => ({ ...r })),
-    pods: prev.pods.map((p) => ({ ...p, volumes: [...p.volumes] })),
+    daemonSets: prev.daemonSets.map((d) => ({ ...d })),
+    jobs: prev.jobs.map((j) => ({ ...j })),
+    cronJobs: prev.cronJobs.map((c) => ({ ...c })),
+    hpas: prev.hpas.map((h) => ({ ...h })),
+    pods: prev.pods.map((p) => ({ ...p, volumes: [...p.volumes], containers: p.containers.map((c) => ({ ...c })) })),
     services: prev.services.map((sv) => ({ ...sv, endpoints: [...sv.endpoints] })),
     ingresses: prev.ingresses.map((i) => ({ ...i })),
     egressTargets: prev.egressTargets.map((e) => ({ ...e, usedBy: [...e.usedBy] })),
@@ -61,11 +72,19 @@ export function step(prev: EngineState): EngineState {
   // 2. Bind PVCs to PVs
   s = reconcilePVCs(s);
 
+  // 2b. HPA controller — adjusts deployment.desiredReplicas from synthetic load
+  s = reconcileHPA(s);
+
   // 3. Deployment controller — sets desiredReplicas on RSs per strategy
   s = reconcileDeployments(s);
 
   // 4. ReplicaSet controller — creates/terminates pods
   s = reconcileReplicaSets(s);
+
+  // 4b. Other workload controllers — create their own pods
+  s = reconcileDaemonSets(s);
+  s = reconcileCronJobs(s);
+  s = reconcileJobs(s);
 
   // 5. Scheduler — assigns Pending pods to a node
   s = scheduler(s);
@@ -105,21 +124,59 @@ function isAvailable(p: K8sPod): boolean {
   return p.phase === "Running" && p.containers.every((c) => c.ready);
 }
 
-function findReadyWorker(s: EngineState): K8sNode | null {
+/** Resource requests for a pod (sum of its containers), with defaults applied. */
+export function podRequests(p: K8sPod): Resources {
+  if (!p.containers.length) return { ...DEFAULT_REQUESTS };
+  return p.containers.reduce(
+    (acc, c) => {
+      const r = c.requests ?? DEFAULT_REQUESTS;
+      return { cpu: acc.cpu + r.cpu, mem: acc.mem + r.mem };
+    },
+    { cpu: 0, mem: 0 },
+  );
+}
+
+/** Compute requested cpu/mem already committed to a node by its scheduled pods. */
+export function nodeAllocated(s: EngineState, nodeId: string): Resources {
+  return s.pods
+    .filter((p) => p.nodeId === nodeId && p.phase !== "Terminating" && p.phase !== "Succeeded")
+    .reduce(
+      (acc, p) => {
+        const r = podRequests(p);
+        return { cpu: acc.cpu + r.cpu, mem: acc.mem + r.mem };
+      },
+      { cpu: 0, mem: 0 },
+    );
+}
+
+/**
+ * Pick the least-loaded Ready worker that still has room for the pod's
+ * requests. Returns the chosen node, or a reason string explaining why nothing
+ * fits (so the scheduler can emit an accurate FailedScheduling event).
+ */
+function findFittingNode(s: EngineState, pod: K8sPod): { node: K8sNode } | { reason: string } {
   const workers = s.nodes.filter((n) => n.role === "worker" && n.status === "Ready");
-  if (!workers.length) return null;
-  // least-loaded by current pod count (excluding Terminating)
-  const counts = new Map<string, number>();
-  for (const p of s.pods) {
-    if (p.nodeId && p.phase !== "Terminating") {
-      counts.set(p.nodeId, (counts.get(p.nodeId) ?? 0) + 1);
-    }
-  }
-  return workers.reduce((best, n) => {
-    const cb = counts.get(best.id) ?? 0;
-    const cn = counts.get(n.id) ?? 0;
-    return cn < cb ? n : best;
+  if (!workers.length) return { reason: "no Ready worker nodes" };
+  const req = podRequests(pod);
+  let cpuBlocked = false;
+  let memBlocked = false;
+  const fitting = workers.filter((n) => {
+    const used = nodeAllocated(s, n.id);
+    const cpuOk = used.cpu + req.cpu <= n.capacity.cpu;
+    const memOk = used.mem + req.mem <= n.capacity.mem;
+    if (!cpuOk) cpuBlocked = true;
+    if (!memOk) memBlocked = true;
+    return cpuOk && memOk;
   });
+  if (!fitting.length) {
+    const what = cpuBlocked && memBlocked ? "cpu, memory" : cpuBlocked ? "cpu" : "memory";
+    return { reason: `Insufficient ${what}` };
+  }
+  // least-loaded (by committed cpu) among the nodes that fit
+  const node = fitting.reduce((best, n) =>
+    nodeAllocated(s, n.id).cpu < nodeAllocated(s, best.id).cpu ? n : best,
+  );
+  return { node };
 }
 
 function findOrCreateNamespace(s: EngineState, name: string): K8sNamespace {
@@ -196,6 +253,7 @@ function applyAction(s: EngineState, a: Action): EngineState {
       if (existing) {
         existing.desiredReplicas = a.spec.replicas;
         if (a.spec.volumeClaims) existing.volumeClaims = a.spec.volumeClaims;
+        if (a.spec.requests) existing.requests = a.spec.requests;
         if (existing.image !== image) {
           existing.image = image;
           existing.templateHash = hash;
@@ -219,9 +277,121 @@ function applyAction(s: EngineState, a: Action): EngineState {
         templateHash: hash,
         rollouts: [{ revision: 1, templateHash: hash, image, at: s.tick }],
         volumeClaims: a.spec.volumeClaims ?? [],
+        requests: a.spec.requests,
       };
       s.deployments.push(d);
       return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "Deployment", name: d.name, id: d.id }, message: `created` });
+    }
+    // -------- other workload controllers --------
+    case "ApplyDaemonSet": {
+      const ns = a.spec.namespace ?? DEFAULT_NS;
+      findOrCreateNamespace(s, ns);
+      const existing = s.daemonSets.find((d) => d.name === a.spec.name && d.namespace === ns);
+      const hash = templateHashFor(a.spec.image);
+      if (existing) {
+        existing.image = a.spec.image;
+        existing.templateHash = hash;
+        if (a.spec.requests) existing.requests = a.spec.requests;
+        return emit(s, { type: "Normal", reason: "Applied", involvedObject: { kind: "DaemonSet", name: existing.name, id: existing.id }, message: `updated` });
+      }
+      const ds: K8sDaemonSet = {
+        id: nextId("ds"), name: a.spec.name, namespace: ns, image: a.spec.image,
+        color: a.spec.color ?? "#22d3ee", templateHash: hash, requests: a.spec.requests,
+      };
+      s.daemonSets.push(ds);
+      return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "DaemonSet", name: ds.name, id: ds.id }, message: `one pod per node` });
+    }
+    case "DeleteDaemonSet": {
+      const ds = s.daemonSets.find((d) => d.name === a.name && (a.namespace ? d.namespace === a.namespace : true));
+      if (!ds) return s;
+      for (const p of s.pods) if (p.ownerRef === ds.id && p.phase !== "Terminating") { p.phase = "Terminating"; p.terminationTicks = 1; }
+      s.daemonSets = s.daemonSets.filter((x) => x.id !== ds.id);
+      return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "DaemonSet", name: ds.name, id: ds.id }, message: `removed` });
+    }
+    case "ApplyJob": {
+      const ns = a.spec.namespace ?? DEFAULT_NS;
+      findOrCreateNamespace(s, ns);
+      if (s.jobs.find((j) => j.name === a.spec.name && j.namespace === ns)) return s;
+      const job: K8sJob = {
+        id: nextId("job"), name: a.spec.name, namespace: ns, image: a.spec.image,
+        color: a.spec.color ?? "#a855f7", templateHash: templateHashFor(a.spec.image),
+        completions: Math.max(1, a.spec.completions ?? 1), succeeded: 0, requests: a.spec.requests,
+      };
+      s.jobs.push(job);
+      return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "Job", name: job.name, id: job.id }, message: `needs ${job.completions} completion(s)` });
+    }
+    case "DeleteJob": {
+      const job = s.jobs.find((j) => j.name === a.name && (a.namespace ? j.namespace === a.namespace : true));
+      if (!job) return s;
+      for (const p of s.pods) if (p.ownerRef === job.id && p.phase !== "Terminating") { p.phase = "Terminating"; p.terminationTicks = 1; }
+      s.jobs = s.jobs.filter((x) => x.id !== job.id);
+      return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "Job", name: job.name, id: job.id }, message: `removed` });
+    }
+    case "ApplyCronJob": {
+      const ns = a.spec.namespace ?? DEFAULT_NS;
+      findOrCreateNamespace(s, ns);
+      if (s.cronJobs.find((c) => c.name === a.spec.name && c.namespace === ns)) return s;
+      const cj: K8sCronJob = {
+        id: nextId("cj"), name: a.spec.name, namespace: ns, image: a.spec.image,
+        color: a.spec.color ?? "#a855f7", schedule: Math.max(1, a.spec.schedule),
+        lastScheduledTick: s.tick, completions: Math.max(1, a.spec.completions ?? 1), requests: a.spec.requests,
+      };
+      s.cronJobs.push(cj);
+      return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "CronJob", name: cj.name, id: cj.id }, message: `every ${cj.schedule} ticks` });
+    }
+    case "DeleteCronJob": {
+      const cj = s.cronJobs.find((c) => c.name === a.name && (a.namespace ? c.namespace === a.namespace : true));
+      if (!cj) return s;
+      s.cronJobs = s.cronJobs.filter((x) => x.id !== cj.id);
+      return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "CronJob", name: cj.name, id: cj.id }, message: `removed` });
+    }
+    // -------- autoscaling + probes --------
+    case "ApplyHPA": {
+      const ns = a.spec.namespace ?? DEFAULT_NS;
+      const dep = s.deployments.find((d) => d.name === a.spec.deploymentName && d.namespace === ns);
+      if (!dep) return emit(s, { type: "Warning", reason: "NotFound", involvedObject: { kind: "HorizontalPodAutoscaler", name: a.spec.deploymentName, id: a.spec.deploymentName }, message: `target deployment ${a.spec.deploymentName} not found` });
+      const name = a.spec.name ?? a.spec.deploymentName;
+      const existing = s.hpas.find((h) => h.name === name && h.namespace === ns);
+      if (existing) {
+        existing.minReplicas = a.spec.minReplicas;
+        existing.maxReplicas = a.spec.maxReplicas;
+        existing.targetCpuPercent = a.spec.targetCpuPercent;
+        return emit(s, { type: "Normal", reason: "Applied", involvedObject: { kind: "HorizontalPodAutoscaler", name, id: existing.id }, message: `updated` });
+      }
+      const hpa: K8sHPA = {
+        id: nextId("hpa"), name, namespace: ns, targetDeployment: dep.name,
+        minReplicas: Math.max(1, a.spec.minReplicas), maxReplicas: Math.max(a.spec.minReplicas, a.spec.maxReplicas),
+        targetCpuPercent: Math.max(1, a.spec.targetCpuPercent),
+      };
+      s.hpas.push(hpa);
+      return emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "HorizontalPodAutoscaler", name, id: hpa.id }, message: `target ${hpa.targetCpuPercent}% cpu, ${hpa.minReplicas}-${hpa.maxReplicas} replicas` });
+    }
+    case "DeleteHPA": {
+      const h = s.hpas.find((x) => x.name === a.name && (a.namespace ? x.namespace === a.namespace : true));
+      if (!h) return s;
+      s.hpas = s.hpas.filter((x) => x.id !== h.id);
+      return emit(s, { type: "Normal", reason: "Deleted", involvedObject: { kind: "HorizontalPodAutoscaler", name: h.name, id: h.id }, message: `removed` });
+    }
+    case "SetLoad": {
+      const d = s.deployments.find((x) => x.name === a.deployment && (a.namespace ? x.namespace === a.namespace : true));
+      if (!d) return s;
+      d.load = Math.max(0, a.load);
+      return s;
+    }
+    case "SetReadiness": {
+      const p = s.pods.find((x) => x.name === a.name && (a.namespace ? x.namespace === a.namespace : true));
+      if (!p || p.phase !== "Running") return s;
+      for (const c of p.containers) c.ready = a.ready;
+      return emit(s, a.ready
+        ? { type: "Normal", reason: "Ready", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: `readiness probe passing` }
+        : { type: "Warning", reason: "Unhealthy", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: `readiness probe failed` });
+    }
+    case "FailLiveness": {
+      const p = s.pods.find((x) => x.name === a.name && (a.namespace ? x.namespace === a.namespace : true));
+      if (!p || p.phase !== "Running") return s;
+      p.containers.forEach((c) => (c.ready = false));
+      setPhase(s, p, "Failed", "Liveness", `liveness probe failed`);
+      return s;
     }
     case "DrainNode": {
       const n = s.nodes.find((x) => x.name === a.node);
@@ -385,6 +555,10 @@ function applyAction(s: EngineState, a: Action): EngineState {
       // cascade delete
       for (const p of s.pods) if (p.namespace === a.name) { p.phase = "Terminating"; p.terminationTicks = 1; }
       s.deployments = s.deployments.filter((d) => d.namespace !== a.name);
+      s.daemonSets = s.daemonSets.filter((d) => d.namespace !== a.name);
+      s.jobs = s.jobs.filter((j) => j.namespace !== a.name);
+      s.cronJobs = s.cronJobs.filter((c) => c.namespace !== a.name);
+      s.hpas = s.hpas.filter((h) => h.namespace !== a.name);
       s.services = s.services.filter((sv) => sv.namespace !== a.name);
       s.ingresses = s.ingresses.filter((i) => i.namespace !== a.name);
       s.pvcs = s.pvcs.filter((c) => {
@@ -406,7 +580,7 @@ function applyAction(s: EngineState, a: Action): EngineState {
       const idx = existingWorkers.length + 1;
       const name = a.name ?? `worker-node-${idx}`;
       if (s.nodes.find((n) => n.name === name)) return s;
-      const node: K8sNode = { id: nextId("node"), name, role: "worker", status: "Ready" };
+      const node: K8sNode = { id: nextId("node"), name, role: "worker", status: "Ready", capacity: { ...DEFAULT_NODE_CAPACITY } };
       s.nodes.push(node);
       return emit(s, { type: "Normal", reason: "NodeReady", involvedObject: { kind: "Node", name: node.name, id: node.id }, message: `joined the cluster` });
     }
@@ -465,6 +639,27 @@ function reconcilePVCs(s: EngineState): EngineState {
     pvc.status = "Bound";
     pvc.boundVolume = candidate.id;
     emit(s, { type: "Normal", reason: "Bound", involvedObject: { kind: "PVC", name: pvc.name, id: pvc.id }, message: `bound to ${candidate.name}` });
+  }
+  return s;
+}
+
+// ---------- HPA controller ----------
+// Adjusts a Deployment's desiredReplicas to hold a target CPU utilisation.
+// desired = ceil(currentReplicas * currentUtil / targetUtil), clamped to [min,max].
+
+function reconcileHPA(s: EngineState): EngineState {
+  for (const hpa of s.hpas) {
+    const dep = s.deployments.find((d) => d.name === hpa.targetDeployment && d.namespace === hpa.namespace);
+    if (!dep) continue;
+    const util = dep.load ?? 0; // synthetic avg CPU utilisation %
+    const current = Math.max(1, dep.desiredReplicas);
+    let desired = Math.ceil((current * util) / hpa.targetCpuPercent);
+    desired = Math.max(hpa.minReplicas, Math.min(hpa.maxReplicas, desired));
+    if (desired !== dep.desiredReplicas) {
+      const dir = desired > dep.desiredReplicas ? "up" : "down";
+      dep.desiredReplicas = desired;
+      emit(s, { type: "Normal", reason: "SuccessfulRescale", involvedObject: { kind: "HorizontalPodAutoscaler", name: hpa.name, id: hpa.id }, message: `scaled ${dir} to ${desired} (cpu ${util}% vs target ${hpa.targetCpuPercent}%)` });
+    }
   }
   return s;
 }
@@ -549,7 +744,7 @@ function reconcileReplicaSets(s: EngineState): EngineState {
           nodeId: null,
           phase: "Pending",
           restartCount: 0,
-          containers: [{ name: dep.name, image: dep.image, ready: false }],
+          containers: [{ name: dep.name, image: dep.image, ready: false, requests: dep.requests ?? { ...DEFAULT_REQUESTS } }],
           volumes: dep.volumeClaims.map((c) => ({ name: c, claimName: c })),
           templateHash: rs.templateHash,
           createdAt: s.tick,
@@ -574,19 +769,136 @@ function reconcileReplicaSets(s: EngineState): EngineState {
   return s;
 }
 
+// ---------- DaemonSet controller ----------
+// Ensures exactly one pod per Ready worker. DaemonSet pods are pinned directly
+// to their node (bypassing the capacity-based scheduler, like real node agents).
+
+function reconcileDaemonSets(s: EngineState): EngineState {
+  for (const ds of s.daemonSets) {
+    const readyWorkers = s.nodes.filter((n) => n.role === "worker" && n.status === "Ready");
+    for (const node of readyWorkers) {
+      const has = s.pods.some((p) => p.ownerRef === ds.id && p.nodeId === node.id && p.phase !== "Terminating");
+      if (has) continue;
+      const pod: K8sPod = {
+        id: nextId("pod"),
+        name: podNameFor(ds.name, ds.templateHash),
+        namespace: ds.namespace,
+        ownerKind: "DaemonSet",
+        ownerRef: ds.id,
+        deploymentId: null,
+        nodeId: node.id, // pinned
+        phase: "Pending",
+        restartCount: 0,
+        containers: [{ name: ds.name, image: ds.image, ready: false, requests: ds.requests ?? { ...DEFAULT_REQUESTS } }],
+        volumes: [],
+        templateHash: ds.templateHash,
+        createdAt: s.tick,
+        phaseTicks: 0,
+        terminationTicks: 0,
+        failuresInARow: 0,
+        backoffTicks: 0,
+        flightProgress: 0,
+      };
+      s.pods.push(pod);
+      emit(s, { type: "Normal", reason: "Scheduled", involvedObject: { kind: "Pod", name: pod.name, id: pod.id }, message: `daemon pod on ${node.name}` });
+    }
+  }
+  return s;
+}
+
+// ---------- Job controller ----------
+// Keeps `completions` pods running until that many reach Succeeded, then stops.
+
+function reconcileJobs(s: EngineState): EngineState {
+  for (const job of s.jobs) {
+    const own = s.pods.filter((p) => p.ownerRef === job.id);
+    job.succeeded = own.filter((p) => p.phase === "Succeeded").length;
+    if (job.succeeded >= job.completions) continue;
+    const active = own.filter((p) => p.phase !== "Succeeded" && p.phase !== "Terminating").length;
+    const needed = job.completions - job.succeeded - active;
+    for (let i = 0; i < needed; i++) {
+      const pod: K8sPod = {
+        id: nextId("pod"),
+        name: podNameFor(job.name, job.templateHash),
+        namespace: job.namespace,
+        ownerKind: "Job",
+        ownerRef: job.id,
+        deploymentId: null,
+        nodeId: null, // scheduled normally
+        phase: "Pending",
+        restartCount: 0,
+        containers: [{ name: job.name, image: job.image, ready: false, requests: job.requests ?? { ...DEFAULT_REQUESTS } }],
+        volumes: [],
+        templateHash: job.templateHash,
+        createdAt: s.tick,
+        phaseTicks: 0,
+        terminationTicks: 0,
+        failuresInARow: 0,
+        backoffTicks: 0,
+        flightProgress: 0,
+      };
+      s.pods.push(pod);
+      emit(s, { type: "Normal", reason: "Created", involvedObject: { kind: "Pod", name: pod.name, id: pod.id }, message: `job pod (pending scheduling)` });
+    }
+  }
+  return s;
+}
+
+// ---------- CronJob controller ----------
+// Spawns a fresh Job every `schedule` ticks.
+
+function reconcileCronJobs(s: EngineState): EngineState {
+  for (const cj of s.cronJobs) {
+    if (s.tick - cj.lastScheduledTick < cj.schedule) continue;
+    cj.lastScheduledTick = s.tick;
+    const job: K8sJob = {
+      id: nextId("job"),
+      name: `${cj.name}-${s.tick}`,
+      namespace: cj.namespace,
+      image: cj.image,
+      color: cj.color,
+      templateHash: templateHashFor(cj.image),
+      completions: cj.completions,
+      succeeded: 0,
+      requests: cj.requests,
+    };
+    s.jobs.push(job);
+    emit(s, { type: "Normal", reason: "SuccessfulCreate", involvedObject: { kind: "CronJob", name: cj.name, id: cj.id }, message: `created job ${job.name}` });
+
+    // successfulJobsHistoryLimit: keep only the most recent N Jobs from this
+    // CronJob; terminate older ones (and let the kubelet GC their pods) so a
+    // long-running CronJob demo doesn't accumulate Succeeded pods forever.
+    const HISTORY_LIMIT = 3;
+    const mine = s.jobs.filter((j) => j.name.startsWith(`${cj.name}-`));
+    if (mine.length > HISTORY_LIMIT) {
+      const stale = mine.slice(0, mine.length - HISTORY_LIMIT);
+      const staleIds = new Set(stale.map((j) => j.id));
+      for (const p of s.pods) if (p.ownerRef && staleIds.has(p.ownerRef) && p.phase !== "Terminating") { p.phase = "Terminating"; p.terminationTicks = 1; }
+      s.jobs = s.jobs.filter((j) => !staleIds.has(j.id));
+    }
+  }
+  return s;
+}
+
 // ---------- Scheduler ----------
 
 function scheduler(s: EngineState): EngineState {
   for (const p of s.pods) {
     if (p.phase !== "Pending" || p.nodeId !== null) continue;
-    const node = findReadyWorker(s);
-    if (!node) {
-      emit(s, { type: "Warning", reason: "FailedScheduling", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: `no Ready worker nodes` });
+    const result = findFittingNode(s, p);
+    if ("reason" in result) {
+      // emit only when the pod first becomes unschedulable / the reason changes,
+      // so a permanently-Pending pod doesn't spam the event log every tick
+      if (p.pendingReason !== result.reason) {
+        emit(s, { type: "Warning", reason: "FailedScheduling", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: result.reason });
+      }
+      p.pendingReason = result.reason;
       continue;
     }
-    p.nodeId = node.id;
+    p.nodeId = result.node.id;
+    p.pendingReason = undefined;
     p.flightProgress = 0;
-    emit(s, { type: "Normal", reason: "Scheduled", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: `assigned to ${node.name}` });
+    emit(s, { type: "Normal", reason: "Scheduled", involvedObject: { kind: "Pod", name: p.name, id: p.id }, message: `assigned to ${result.node.name}` });
   }
   return s;
 }
@@ -632,7 +944,14 @@ function kubelet(s: EngineState): EngineState {
       }
       continue;
     }
-    if (p.phase === "Running") continue;
+    if (p.phase === "Running") {
+      // Job pods run to completion instead of staying up forever
+      if (p.ownerKind === "Job" && p.phaseTicks >= 3) {
+        for (const c of p.containers) c.ready = false;
+        setPhase(s, p, "Succeeded", "Completed", `job container finished`);
+      }
+      continue;
+    }
     if (p.phase === "Terminating") {
       p.terminationTicks -= 1;
       continue;

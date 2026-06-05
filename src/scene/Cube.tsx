@@ -27,20 +27,18 @@ export function Cube() {
   return (
     <group>
       {/* Edge slab (top) — cluster boundary */}
-      <Slab y={layout.edge.y} h={layout.edge.h} accent="#22d3ee" emissive={0.18} />
+      <Slab y={layout.edge.y} h={layout.edge.h} />
 
       {/* Worker slabs */}
       {layout.workers.map((rect, i) => {
         const node = workers[i];
-        const status = node?.status ?? "Ready";
-        const accent = status === "NotReady" ? "#ef4444" : status === "Cordoned" ? "#f59e0b" : "#3b82f6";
         return (
-          <Slab key={node?.id ?? `slab-${i}`} y={rect.y} h={rect.h} accent={accent} emissive={status === "Ready" ? 0.1 : 0.18} />
+          <Slab key={node?.id ?? `slab-${i}`} y={rect.y} h={rect.h} />
         );
       })}
 
       {/* Control-plane slab (bottom) */}
-      <Slab y={layout.controlPlane.y} h={layout.controlPlane.h} accent="#f59e0b" emissive={0.18} />
+      <Slab y={layout.controlPlane.y} h={layout.controlPlane.h} />
 
       {/* Corner rack rails — vertical pillars connecting all slabs */}
       <RackRails layout={layout} />
@@ -59,26 +57,24 @@ export function Cube() {
 interface SlabProps {
   y: number;
   h: number;
-  accent: string;
-  emissive: number;
 }
 
-function Slab({ y, h, accent, emissive }: SlabProps) {
+function Slab({ y, h }: SlabProps) {
   return (
     <group position={[0, y, 0]}>
       <RoundedBox args={[SLAB_WIDTH, h, SLAB_DEPTH]} radius={0.025} smoothness={3} castShadow receiveShadow>
         <meshStandardMaterial
-          color="#0a1224"
-          roughness={0.45}
-          metalness={0.85}
-          emissive={accent}
-          emissiveIntensity={emissive}
+          color="#ffffff"
+          roughness={1.0}
+          metalness={0.0}
+          emissive="#000000"
+          emissiveIntensity={0}
         />
-        <Edges threshold={20} color={accent} />
+        <Edges threshold={20} color="#000000" />
       </RoundedBox>
       <mesh position={[0, 0, 0]}>
         <boxGeometry args={[SLAB_WIDTH * 0.998, h * 0.999, SLAB_DEPTH * 0.998]} />
-        <meshBasicMaterial color={accent} transparent opacity={0.04} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.02} />
       </mesh>
     </group>
   );
@@ -91,7 +87,6 @@ function RackRails({ layout }: { layout: ReturnType<typeof computeSliceLayout> }
   const cy = (top + bottom) / 2;
   const halfW = SLAB_WIDTH / 2 + 0.005;
   const halfD = SLAB_DEPTH / 2 + 0.005;
-  const railColor = "#0ea5e9";
 
   const corners: [number, number][] = [
     [-halfW, -halfD],
@@ -106,7 +101,8 @@ function RackRails({ layout }: { layout: ReturnType<typeof computeSliceLayout> }
     <group position={[0, cy, 0]}>
       {corners.map(([x, z], i) => (
         <mesh key={i} position={[x, 0, z]} geometry={railGeo}>
-          <meshStandardMaterial color="#0f172a" emissive={railColor} emissiveIntensity={0.35} />
+          <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+          <Edges threshold={20} color="#000000" />
         </mesh>
       ))}
     </group>

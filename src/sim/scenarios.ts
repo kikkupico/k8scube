@@ -18,6 +18,10 @@ function patchStore(fn: (s: EngineState) => EngineState) {
     namespaces: cur.namespaces.map((n) => ({ ...n })),
     deployments: cur.deployments.map((d) => ({ ...d })),
     replicaSets: cur.replicaSets.map((r) => ({ ...r })),
+    daemonSets: cur.daemonSets.map((d) => ({ ...d })),
+    jobs: cur.jobs.map((j) => ({ ...j })),
+    cronJobs: cur.cronJobs.map((c) => ({ ...c })),
+    hpas: cur.hpas.map((h) => ({ ...h })),
     pods: cur.pods.map((p) => ({ ...p, volumes: [...p.volumes] })),
     services: cur.services.map((s) => ({ ...s, endpoints: [...s.endpoints] })),
     ingresses: cur.ingresses.map((i) => ({ ...i })),
@@ -35,6 +39,10 @@ function patchStore(fn: (s: EngineState) => EngineState) {
     namespaces: next.namespaces,
     deployments: next.deployments,
     replicaSets: next.replicaSets,
+    daemonSets: next.daemonSets,
+    jobs: next.jobs,
+    cronJobs: next.cronJobs,
+    hpas: next.hpas,
     pods: next.pods,
     services: next.services,
     ingresses: next.ingresses,
@@ -124,6 +132,74 @@ export const SCENARIOS: Scenario[] = [
       const enq = useCluster.getState().enqueue;
       enq({ type: "ApplyService", spec: { name: "frontend-svc", deploymentName: "frontend", type: "LoadBalancer" } });
       enq({ type: "ApplyIngress", spec: { name: "web", host: "k8scube.local", serviceName: "frontend-svc" } });
+    },
+  },
+  {
+    name: "unschedulable",
+    title: "Unschedulable pod",
+    description: "request more CPU than any node has free; pod sticks Pending",
+    run: () => {
+      const enq = useCluster.getState().enqueue;
+      // each replica asks for 3 cores; with 4-core nodes only one fits per node,
+      // so 5 replicas can't all be placed -> FailedScheduling (Insufficient cpu).
+      enq({ type: "ApplyDeployment", spec: { name: "hungry", replicas: 5, image: "stress:1.0", color: "#ef4444", requests: { cpu: 3000, mem: 1024 } } });
+    },
+  },
+  {
+    name: "daemonset",
+    title: "DaemonSet on every node",
+    description: "deploy a node agent; one pod lands on each worker, follows node add/remove",
+    run: () => {
+      useCluster.getState().enqueue({ type: "ApplyDaemonSet", spec: { name: "node-exporter", image: "node-exporter:1.7", color: "#22d3ee", requests: { cpu: 100, mem: 128 } } });
+    },
+  },
+  {
+    name: "batch-job",
+    title: "Batch Job to completion",
+    description: "run a Job with 3 completions; pods reach Succeeded and stay (not restarted)",
+    run: () => {
+      useCluster.getState().enqueue({ type: "ApplyJob", spec: { name: "db-backup", namespace: "apps", image: "backup:1.0", color: "#a855f7", completions: 3 } });
+    },
+  },
+  {
+    name: "cronjob",
+    title: "CronJob schedule",
+    description: "register a CronJob; it spawns a fresh Job every 20 ticks",
+    run: () => {
+      useCluster.getState().enqueue({ type: "ApplyCronJob", spec: { name: "nightly-report", image: "report:1.0", color: "#a855f7", schedule: 20, completions: 1 } });
+    },
+  },
+  {
+    name: "readiness-gate",
+    title: "Readiness gate",
+    description: "fail a pod's readiness probe; it leaves the Service endpoints but keeps Running, then returns",
+    run: () => {
+      const st = useCluster.getState();
+      const p = st.pods.find((x) => x.deploymentId === "deploy-fe" && x.phase === "Running");
+      if (!p) return;
+      st.enqueue({ type: "SetReadiness", name: p.name, namespace: p.namespace, ready: false });
+      setTimeout(() => useCluster.getState().enqueue({ type: "SetReadiness", name: p.name, namespace: p.namespace, ready: true }), 4000);
+    },
+  },
+  {
+    name: "liveness-restart",
+    title: "Liveness restart",
+    description: "fail a pod's liveness probe; the kubelet restarts the container in place (restart count +1)",
+    run: () => {
+      const st = useCluster.getState();
+      const p = st.pods.find((x) => x.deploymentId === "deploy-be" && x.phase === "Running");
+      if (p) st.enqueue({ type: "FailLiveness", name: p.name, namespace: p.namespace });
+    },
+  },
+  {
+    name: "autoscale",
+    title: "Autoscale under load",
+    description: "attach an HPA to frontend, then drive CPU load up; replicas climb, then settle when load drops",
+    run: () => {
+      const enq = useCluster.getState().enqueue;
+      enq({ type: "ApplyHPA", spec: { deploymentName: "frontend", minReplicas: 2, maxReplicas: 6, targetCpuPercent: 50 } });
+      enq({ type: "SetLoad", deployment: "frontend", load: 160 });
+      setTimeout(() => useCluster.getState().enqueue({ type: "SetLoad", deployment: "frontend", load: 10 }), 6000);
     },
   },
   {

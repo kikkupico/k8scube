@@ -28,31 +28,28 @@ export function EdgeFace() {
   const ingSlots = useMemo(() => layout(ingresses.length, 0.55), [ingresses.length]);
   const egSlots = useMemo(() => layout(egressTargets.length, 0.55), [egressTargets.length]);
 
-  const INGRESS_COLOR = "#22d3ee";
-  const EGRESS_COLOR = "#f472b6";
-
   return (
     <FaceFrame face="edge">
       {/* ------ INGRESS HALF (upper) ------ */}
       <group position={[0, 0.5, 0]}>
         {/* USER */}
         <group position={[-0.7, 0.32, 0.05]}>
-          <UserIcon color={INGRESS_COLOR} />
-          <Text position={[0.18, 0, 0]} fontSize={0.04} color={INGRESS_COLOR} anchorX="left" outlineWidth={0.002} outlineColor="#000000">
+          <UserIcon color="#000000" />
+          <Text position={[0.18, 0, 0]} fontSize={0.04} fontWeight={800} color="#000000" anchorX="left" outlineWidth={0.003} outlineColor="#ffffff">
             USER · BROWSER
           </Text>
-          <Text position={[0.18, -0.05, 0]} fontSize={0.028} color="#94a3b8" anchorX="left">
+          <Text position={[0.18, -0.05, 0]} fontSize={0.028} fontWeight={700} color="#555555" anchorX="left" outlineWidth={0.002} outlineColor="#ffffff">
             inbound HTTP
           </Text>
         </group>
 
         {/* INGRESS label */}
-        <Text position={[0.7, 0.34, 0.05]} fontSize={0.04} color={INGRESS_COLOR} anchorX="right" outlineWidth={0.002} outlineColor="#000000">
+        <Text position={[0.7, 0.34, 0.05]} fontSize={0.04} fontWeight={800} color="#000000" anchorX="right" outlineWidth={0.003} outlineColor="#ffffff">
           INGRESS · INBOUND ↓
         </Text>
 
         {/* falling particles from above */}
-        {ingresses.length > 0 && <ParticleStream color={INGRESS_COLOR} count={4} from={0.4} to={-0.18} direction="down" />}
+        {ingresses.length > 0 && <ParticleStream color="#000000" count={4} from={0.4} to={-0.18} direction="down" />}
 
         {/* ingress gates */}
         {ingresses.map((ing, i) => {
@@ -63,22 +60,22 @@ export function EdgeFace() {
           return (
             <group key={ing.id} position={[x, y, 0]}>
               <Interactable onClick={(e) => { e.stopPropagation(); setActiveEntity(ing.id); }} scaleHover={1.08}>
-                <PortalGate accent={INGRESS_COLOR} highlight={isActive} arrow="down" />
+                <PortalGate accent={meta.color} highlight={isActive} arrow="down" />
               </Interactable>
-              <Text position={[0, -0.12, 0.05]} fontSize={0.04} color={isActive ? "#ffffff" : INGRESS_COLOR} anchorX="center" outlineWidth={0.002} outlineColor="#000000">
+              <Text position={[0, -0.12, 0.05]} fontSize={0.04} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.003} outlineColor="#ffffff">
                 {ing.host}
               </Text>
-              <Text position={[0, -0.16, 0.05]} fontSize={0.028} color="#94a3b8" anchorX="center">
+              <Text position={[0, -0.16, 0.05]} fontSize={0.028} fontWeight={700} color="#555555" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
                 → {ing.serviceName} · {svc ? `${svc.endpoints.length} EP` : "no svc"}
               </Text>
               {/* tether down into the cluster */}
-              <Tether from={[0, -0.07, 0.04]} to={[0, -0.22, 0.04]} color={INGRESS_COLOR} />
+              <Tether from={[0, -0.07, 0.04]} to={[0, -0.22, 0.04]} color="#000000" />
             </group>
           );
         })}
 
         {ingresses.length === 0 && (
-          <Text position={[0, -0.05, 0.05]} fontSize={0.04} color="#475569" anchorX="center">
+          <Text position={[0, -0.05, 0.05]} fontSize={0.04} fontWeight={800} color="#888888" anchorX="center" outlineWidth={0.003} outlineColor="#ffffff">
             no Ingresses · `kubectl apply -f web`
           </Text>
         )}
@@ -88,15 +85,15 @@ export function EdgeFace() {
       <group position={[0, 0, 0.04]}>
         <mesh>
           <planeGeometry args={[1.78, 0.012]} />
-          <meshStandardMaterial color={meta.color} emissive={meta.color} emissiveIntensity={1.4} transparent opacity={0.65} />
+          <meshStandardMaterial color="#000000" roughness={1.0} metalness={0.0} />
         </mesh>
-        <Text position={[-0.45, 0.04, 0]} fontSize={0.034} color={INGRESS_COLOR} anchorX="center" outlineWidth={0.001} outlineColor="#000000">
+        <Text position={[-0.45, 0.04, 0]} fontSize={0.034} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
           INGRESS ↓
         </Text>
-        <Text position={[0, 0.04, 0]} fontSize={0.034} color={meta.color} anchorX="center" outlineWidth={0.001} outlineColor="#000000">
+        <Text position={[0, 0.04, 0]} fontSize={0.034} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
           ─ CLUSTER BOUNDARY ─
         </Text>
-        <Text position={[0.45, 0.04, 0]} fontSize={0.034} color={EGRESS_COLOR} anchorX="center" outlineWidth={0.001} outlineColor="#000000">
+        <Text position={[0.45, 0.04, 0]} fontSize={0.034} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
           ↑ EGRESS
         </Text>
       </group>
@@ -104,20 +101,20 @@ export function EdgeFace() {
       {/* ------ EGRESS HALF (lower) ------ */}
       <group position={[0, -0.5, 0]}>
         {/* EGRESS label */}
-        <Text position={[-0.7, -0.32, 0.05]} fontSize={0.04} color={EGRESS_COLOR} anchorX="left" outlineWidth={0.002} outlineColor="#000000">
+        <Text position={[-0.7, -0.32, 0.05]} fontSize={0.04} fontWeight={800} color="#000000" anchorX="left" outlineWidth={0.003} outlineColor="#ffffff">
           EGRESS · OUTBOUND ↑
         </Text>
 
         {/* External cloud */}
         <group position={[0.7, -0.32, 0.05]}>
-          <CloudIcon color={EGRESS_COLOR} />
-          <Text position={[0, -0.07, 0]} fontSize={0.034} color={EGRESS_COLOR} anchorX="center">
+          <CloudIcon color="#000000" />
+          <Text position={[0, -0.07, 0]} fontSize={0.034} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
             EXTERNAL APIs
           </Text>
         </group>
 
         {/* rising particles */}
-        {egressTargets.length > 0 && <ParticleStream color={EGRESS_COLOR} count={4} from={0.18} to={-0.4} direction="up" />}
+        {egressTargets.length > 0 && <ParticleStream color="#000000" count={4} from={0.18} to={-0.4} direction="up" />}
 
         {/* egress portals */}
         {egressTargets.map((eg, i) => {
@@ -127,14 +124,14 @@ export function EdgeFace() {
           return (
             <group key={eg.id} position={[x, y, 0]}>
               {/* tether rising out of the cluster */}
-              <Tether from={[0, 0.08, 0.04]} to={[0, 0.22, 0.04]} color={EGRESS_COLOR} />
+              <Tether from={[0, 0.08, 0.04]} to={[0, 0.22, 0.04]} color="#000000" />
               <Interactable onClick={(e) => { e.stopPropagation(); setActiveEntity(eg.id); }} scaleHover={1.08}>
-                <PortalGate accent={EGRESS_COLOR} highlight={isActive} arrow="up" />
+                <PortalGate accent={meta.color} highlight={isActive} arrow="up" />
               </Interactable>
-              <Text position={[0, 0.13, 0.05]} fontSize={0.04} color={isActive ? "#ffffff" : EGRESS_COLOR} anchorX="center" outlineWidth={0.002} outlineColor="#000000">
+              <Text position={[0, 0.13, 0.05]} fontSize={0.04} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.003} outlineColor="#ffffff">
                 {eg.host}
               </Text>
-              <Text position={[0, 0.17, 0.05]} fontSize={0.028} color="#94a3b8" anchorX="center">
+              <Text position={[0, 0.17, 0.05]} fontSize={0.028} fontWeight={700} color="#555555" anchorX="center" outlineWidth={0.002} outlineColor="#ffffff">
                 {eg.protocol} · used by {eg.usedBy.length || 0}
               </Text>
             </group>
@@ -142,7 +139,7 @@ export function EdgeFace() {
         })}
 
         {egressTargets.length === 0 && (
-          <Text position={[0, 0.05, 0.05]} fontSize={0.04} color="#475569" anchorX="center">
+          <Text position={[0, 0.05, 0.05]} fontSize={0.04} fontWeight={800} color="#888888" anchorX="center" outlineWidth={0.003} outlineColor="#ffffff">
             no egress targets · `kubectl apply -f payments`
           </Text>
         )}
@@ -160,72 +157,84 @@ function layout(n: number, step: number): number[] {
 
 // ---------- Sub-props ----------
 
-function UserIcon({ color }: { color: string }) {
+function UserIcon({ color: _color }: { color: string }) {
   return (
     <group>
       <mesh position={[0, 0.04, 0]}>
         <sphereGeometry args={[0.035, 12, 12]} />
-        <meshStandardMaterial color="#020617" emissive={color} emissiveIntensity={0.7} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color="#000000" />
       </mesh>
       <mesh position={[0, -0.04, 0]}>
         <coneGeometry args={[0.06, 0.06, 8]} />
-        <meshStandardMaterial color="#020617" emissive={color} emissiveIntensity={0.7} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color="#000000" />
       </mesh>
     </group>
   );
 }
 
-function CloudIcon({ color }: { color: string }) {
+function CloudIcon({ color: _color }: { color: string }) {
   return (
     <group>
       {/* three overlapping spheres approximating a cloud */}
       <mesh position={[-0.05, 0, 0]}>
         <sphereGeometry args={[0.04, 12, 12]} />
-        <meshStandardMaterial color="#020617" emissive={color} emissiveIntensity={0.7} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color="#000000" />
       </mesh>
       <mesh position={[0, 0.02, 0]}>
         <sphereGeometry args={[0.05, 12, 12]} />
-        <meshStandardMaterial color="#020617" emissive={color} emissiveIntensity={0.7} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color="#000000" />
       </mesh>
       <mesh position={[0.06, -0.005, 0]}>
         <sphereGeometry args={[0.04, 12, 12]} />
-        <meshStandardMaterial color="#020617" emissive={color} emissiveIntensity={0.7} />
+        <meshStandardMaterial color="#ffffff" roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color="#000000" />
       </mesh>
     </group>
   );
 }
 
 interface PortalGateProps { accent: string; highlight: boolean; arrow: "down" | "up" }
-function PortalGate({ accent, highlight, arrow }: PortalGateProps) {
+function PortalGate({ accent: _accent, highlight, arrow }: PortalGateProps) {
+  const bodyColor = highlight ? "#000000" : "#ffffff";
+  const edgeColor = highlight ? "#ffffff" : "#000000";
+  const innerColor = highlight ? "#ffffff" : "#000000";
+  
   return (
     <group>
       <mesh castShadow position={[0, 0, 0.06]}>
         <boxGeometry args={[0.42, 0.13, 0.08]} />
-        <meshStandardMaterial color="#0a1424" roughness={0.4} metalness={0.85} emissive={accent} emissiveIntensity={highlight ? 0.5 : 0.2} />
-        <Edges threshold={20} color={accent} />
+        <meshStandardMaterial color={bodyColor} roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color={edgeColor} />
       </mesh>
       {/* gate beam */}
       <mesh position={[0, 0, 0.11]}>
         <planeGeometry args={[0.36, 0.014]} />
-        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.4} />
+        <meshStandardMaterial color={innerColor} roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color={edgeColor} />
       </mesh>
       {/* arrow indicator */}
       <mesh position={[0, arrow === "down" ? -0.04 : 0.04, 0.11]} rotation={[0, 0, arrow === "down" ? Math.PI : 0]}>
         <coneGeometry args={[0.022, 0.04, 3]} />
-        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.6} />
+        <meshStandardMaterial color={innerColor} roughness={1.0} metalness={0.0} />
+        <Edges threshold={20} color={edgeColor} />
       </mesh>
       {/* port LEDs */}
       {[-0.14, 0.14].map((x, i) => (
         <mesh key={i} position={[x, 0, 0.11]}>
           <sphereGeometry args={[0.011, 8, 8]} />
-          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={1.5} />
+          <meshStandardMaterial color={innerColor} roughness={1.0} metalness={0.0} />
+          <Edges threshold={20} color={edgeColor} />
         </mesh>
       ))}
     </group>
   );
 }
 
-function Tether({ from, to, color }: { from: [number, number, number]; to: [number, number, number]; color: string }) {
+function Tether({ from, to, color: _color }: { from: [number, number, number]; to: [number, number, number]; color: string }) {
   const a = from;
   const b = to;
   const mx = (a[0] + b[0]) / 2;
@@ -237,13 +246,13 @@ function Tether({ from, to, color }: { from: [number, number, number]; to: [numb
   return (
     <mesh position={[mx, my, a[2]]} rotation={[0, 0, angle]}>
       <planeGeometry args={[len, 0.01]} />
-      <meshStandardMaterial color={color} emissive={color} emissiveIntensity={1.0} transparent opacity={0.65} />
+      <meshBasicMaterial color="#000000" transparent opacity={0.45} />
     </mesh>
   );
 }
 
 interface StreamProps { color: string; count: number; from: number; to: number; direction: "down" | "up" }
-function ParticleStream({ color, count, from, to, direction }: StreamProps) {
+function ParticleStream({ color: _color, count, from, to, direction }: StreamProps) {
   const ref = useRef<THREE.InstancedMesh>(null);
   const dummy = useMemo(() => new THREE.Object3D(), []);
   const offsets = useMemo(() => Float32Array.from({ length: count }, (_, i) => i / count), [count]);
@@ -265,7 +274,7 @@ function ParticleStream({ color, count, from, to, direction }: StreamProps) {
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, count]} frustumCulled={false}>
       <sphereGeometry args={[0.014, 8, 8]} />
-      <meshStandardMaterial color="#ffffff" emissive={color} emissiveIntensity={2.5} />
+      <meshBasicMaterial color="#000000" />
     </instancedMesh>
   );
 }

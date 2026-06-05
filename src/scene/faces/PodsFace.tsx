@@ -6,7 +6,6 @@ import { useApp } from "../../state/store";
 import { Interactable } from "../Interactable";
 import { PodCapsule } from "../props/PodCapsule";
 import { computeSliceLayout } from "../sliceLayout";
-import { faceMeta } from "../../content/concepts";
 
 const SHELF_W = 1.78;
 const POD_LANE_X_PADDING = 0.08;
@@ -15,7 +14,21 @@ export function PodsFace() {
   const pods = useCluster((s) => s.pods);
   const nodes = useCluster((s) => s.nodes);
   const deployments = useCluster((s) => s.deployments);
-  const meta = faceMeta("pods");
+  const daemonSets = useCluster((s) => s.daemonSets);
+  const jobs = useCluster((s) => s.jobs);
+
+  // Color a pod by its owning workload (Deployment, DaemonSet or Job).
+  const colorForPod = useMemo(() => {
+    return (p: typeof pods[number]): string => {
+      const dep = deployments.find((d) => d.id === p.deploymentId);
+      if (dep) return dep.color;
+      const ds = daemonSets.find((d) => d.id === p.ownerRef);
+      if (ds) return ds.color;
+      const job = jobs.find((j) => j.id === p.ownerRef);
+      if (job) return job.color;
+      return "#06b6d4";
+    };
+  }, [deployments, daemonSets, jobs]);
   const activeEntityId = useApp((s) => s.activeEntityId);
   const setActiveEntity = useApp((s) => s.setActiveEntity);
 
@@ -66,21 +79,21 @@ export function PodsFace() {
             >
               <planeGeometry args={[SHELF_W + 0.04, slab.h * 0.92]} />
               <meshStandardMaterial
-                color={isNodeActive ? "#0ea5e9" : "#0a1424"}
+                color="#ffffff"
                 transparent
-                opacity={isNodeActive ? 0.18 : 0.08}
-                emissive={meta.color}
-                emissiveIntensity={isNodeActive ? 0.25 : 0.05}
+                opacity={isNodeActive ? 0.95 : 0.45}
+                roughness={1.0}
+                metalness={0.0}
               />
-              <Edges threshold={20} color={isNodeActive ? "#ffffff" : meta.color} />
+              <Edges threshold={20} color="#000000" />
             </mesh>
 
             {/* Node label on the right edge of this slab */}
             <group position={[SHELF_W / 2 + 0.08, slab.y, 0.05]}>
-              <Text fontSize={0.045} fontWeight={700} color={isNodeActive ? "#ffffff" : meta.color} anchorX="left" anchorY="middle" outlineWidth={0.003} outlineColor="#000000">
+              <Text fontSize={0.045} fontWeight={800} color="#000000" anchorX="left" anchorY="middle" outlineWidth={0.004} outlineColor="#ffffff">
                 {node.name.toUpperCase()}
               </Text>
-              <Text position={[0, -0.05, 0]} fontSize={0.03} color="#94a3b8" anchorX="left" anchorY="middle">
+              <Text position={[0, -0.05, 0]} fontSize={0.03} fontWeight={700} color="#555555" anchorX="left" anchorY="middle" outlineWidth={0.002} outlineColor="#ffffff">
                 {slabPods.length} POD{slabPods.length === 1 ? "" : "S"}
               </Text>
             </group>
@@ -95,8 +108,7 @@ export function PodsFace() {
               const x = -usableW / 2 + xStep / 2 + col * xStep;
               const y = slab.y + (rows > 1 ? (rows - 1) / 2 * rowH - row * rowH : 0);
 
-              const dep = deployments.find((d) => d.id === pod.deploymentId);
-              const color = dep?.color ?? "#06b6d4";
+              const color = colorForPod(pod);
               const isActive = activeEntityId === pod.id;
               const visible = pod.flightProgress >= 1;
 
@@ -119,7 +131,7 @@ export function PodsFace() {
 
             {/* Empty slab placeholder text */}
             {slabPods.length === 0 && (
-              <Text position={[0, slab.y, 0.05]} fontSize={0.035} color="#475569" anchorX="center" anchorY="middle">
+              <Text position={[0, slab.y, 0.05]} fontSize={0.035} color="#888888" anchorX="center" anchorY="middle">
                 — empty —
               </Text>
             )}
@@ -130,14 +142,13 @@ export function PodsFace() {
       {/* Pending bay at the top — pods waiting on PVC / scheduling */}
       {pending.length > 0 && (
         <group position={[0, 0.86, 0.08]}>
-          <Text fontSize={0.04} color="#f59e0b" anchorX="center" outlineWidth={0.002} outlineColor="#000000">
+          <Text fontSize={0.04} fontWeight={800} color="#000000" anchorX="center" outlineWidth={0.004} outlineColor="#ffffff">
             PENDING ({pending.length})
           </Text>
           {pending.map((p, i) => {
             const xStep = 0.16;
             const x = (i - (pending.length - 1) / 2) * xStep;
-            const dep = deployments.find((d) => d.id === p.deploymentId);
-            const color = dep?.color ?? "#f59e0b";
+            const color = colorForPod(p);
             return (
               <group key={p.id} position={[x, -0.1, 0]}>
                 <Interactable onClick={(e) => { e.stopPropagation(); setActiveEntity(p.id); }} scaleHover={1.2}>

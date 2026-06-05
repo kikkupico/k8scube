@@ -1,4 +1,24 @@
-import type { Action, ClusterSnapshot, DeploymentSpec } from "../state/clusterStore";
+import type { Action, ClusterSnapshot, DeploymentSpec, K8sNode, K8sPod, Resources } from "../state/clusterStore";
+import { DEFAULT_REQUESTS } from "../state/clusterStore";
+
+/** Sum of a pod's container requests (defaults applied), mirroring the engine. */
+function podReq(p: K8sPod): Resources {
+  if (!p.containers.length) return DEFAULT_REQUESTS;
+  return p.containers.reduce(
+    (acc, c) => {
+      const r = c.requests ?? DEFAULT_REQUESTS;
+      return { cpu: acc.cpu + r.cpu, mem: acc.mem + r.mem };
+    },
+    { cpu: 0, mem: 0 },
+  );
+}
+
+/** cpu/mem committed to a node by its non-terminating pods. */
+function allocatedOn(pods: K8sPod[], nodeId: string): Resources {
+  return pods
+    .filter((p) => p.nodeId === nodeId && p.phase !== "Terminating")
+    .reduce((acc, p) => { const r = podReq(p); return { cpu: acc.cpu + r.cpu, mem: acc.mem + r.mem }; }, { cpu: 0, mem: 0 });
+}
 
 export interface KubectlOutput {
   /** Lines to render in the terminal (already split). */
@@ -11,13 +31,15 @@ export interface KubectlOutput {
 
 const help = [
   "kubectl supports (in this simulator):",
-  "  get [pods|nodes|deployments|services|rs|events|pv|pvc|cm|secret|ingress|egress|ns] [-w] [-n NAMESPACE | -A]",
-  "  describe pod NAME [-n NAMESPACE]",
+  "  get [pods|nodes|deployments|rs|daemonsets|jobs|cronjobs|hpa|services|events|pv|pvc|cm|secret|ingress|egress|ns] [-w] [-n NAMESPACE | -A]",
+  "  describe pod|node NAME [-n NAMESPACE]",
   "  delete pod|deployment|pvc|svc|ingress NAME [-n NAMESPACE]",
   "  scale deployment NAME --replicas=N [-n NAMESPACE]",
   "  set image deployment/NAME container=IMAGE",
   "  rollout status|undo deployment/NAME",
-  "  apply -f PRESET   (presets: redis, cache, hello, db, config, web)",
+  "  autoscale deployment NAME --min=N --max=M --cpu-percent=P",
+  "  load deployment/NAME PERCENT   (sim only: inject CPU load to drive the HPA)",
+  "  apply -f PRESET   (presets: redis, cache, hello, db, config, web, node-exporter, backup, report)",
   "  expose deployment NAME --port=80 [--type=ClusterIP|NodePort|LoadBalancer] [-n NAMESPACE]",
   "  drain|cordon|uncordon node NAME",
   "  create namespace NAME",
@@ -45,6 +67,15 @@ const PRESETS: Record<string, () => Action[]> = {
   web: () => [
     { type: "ApplyService", spec: { name: "frontend-svc", deploymentName: "frontend", type: "LoadBalancer" } },
     { type: "ApplyIngress", spec: { name: "web", host: "k8scube.local", serviceName: "frontend-svc" } },
+  ],
+  "node-exporter": () => [
+    { type: "ApplyDaemonSet", spec: { name: "node-exporter", image: "node-exporter:1.7", color: "#22d3ee", requests: { cpu: 100, mem: 128 } } },
+  ],
+  backup: () => [
+    { type: "ApplyJob", spec: { name: "db-backup", namespace: "apps", image: "backup:1.0", color: "#a855f7", completions: 3 } },
+  ],
+  report: () => [
+    { type: "ApplyCronJob", spec: { name: "nightly-report", image: "report:1.0", color: "#a855f7", schedule: 20, completions: 1 } },
   ],
   payments: () => [
     { type: "ApplyEgressTarget", spec: { name: "stripe-api", host: "api.stripe.com", protocol: "https", usedBy: ["backend"] } },
@@ -101,9 +132,30 @@ function renderPods(s: ClusterSnapshot & { tick: number }, scope: NsScope): stri
 }
 
 function renderNodes(s: ClusterSnapshot): string[] {
-  const header = `${pad("NAME", 22)} ${pad("ROLE", 16)} ${pad("STATUS", 12)}`;
-  const rows = s.nodes.map((n) => `${pad(n.name, 22)} ${pad(n.role, 16)} ${pad(n.status, 12)}`);
+  const header = `${pad("NAME", 22)} ${pad("ROLE", 16)} ${pad("STATUS", 12)} ${pad("CPU", 14)} ${pad("MEM", 16)}`;
+  const rows = s.nodes.map((n) => {
+    const used = allocatedOn(s.pods, n.id);
+    const cpu = `${used.cpu}/${n.capacity.cpu}m`;
+    const mem = `${used.mem}/${n.capacity.mem}Mi`;
+    return `${pad(n.name, 22)} ${pad(n.role, 16)} ${pad(n.status, 12)} ${pad(cpu, 14)} ${pad(mem, 16)}`;
+  });
   return [header, ...rows];
+}
+
+function describeNode(n: K8sNode, pods: K8sPod[]): string[] {
+  const used = allocatedOn(pods, n.id);
+  const onNode = pods.filter((p) => p.nodeId === n.id && p.phase !== "Terminating");
+  const cpuPct = Math.round((used.cpu / n.capacity.cpu) * 100);
+  const memPct = Math.round((used.mem / n.capacity.mem) * 100);
+  return [
+    `Name:        ${n.name}`,
+    `Role:        ${n.role}`,
+    `Status:      ${n.status}`,
+    `Capacity:    cpu ${n.capacity.cpu}m, mem ${n.capacity.mem}Mi`,
+    `Allocated:   cpu ${used.cpu}m (${cpuPct}%), mem ${used.mem}Mi (${memPct}%)`,
+    `Pods:        ${onNode.length}`,
+    ...onNode.map((p) => `  - ${p.name} (${p.phase})`),
+  ];
 }
 
 function renderDeployments(s: ClusterSnapshot, scope: NsScope): string[] {
@@ -134,6 +186,52 @@ function renderRS(s: ClusterSnapshot): string[] {
     const dep = s.deployments.find((d) => d.id === r.deploymentId)?.name ?? "-";
     const cur = s.pods.filter((p) => p.ownerRef === r.id && p.phase !== "Terminating").length;
     return `${pad(r.id, 22)} ${pad(dep, 16)} ${pad(String(r.desiredReplicas), 8)} ${pad(String(cur), 8)} ${pad(r.templateHash, 8)}`;
+  });
+  return [header, ...rows];
+}
+
+function renderDaemonSets(s: ClusterSnapshot, scope: NsScope): string[] {
+  const filtered = inScope(s.daemonSets, scope);
+  const workers = s.nodes.filter((n) => n.role === "worker").length;
+  const header = `${pad("NS", 10)} ${pad("NAME", 20)} ${pad("DESIRED", 8)} ${pad("READY", 7)} ${pad("IMAGE", 24)}`;
+  const rows = filtered.map((d) => {
+    const own = s.pods.filter((p) => p.ownerRef === d.id && p.phase !== "Terminating");
+    const ready = own.filter((p) => p.phase === "Running").length;
+    return `${pad(d.namespace, 10)} ${pad(d.name, 20)} ${pad(String(workers), 8)} ${pad(`${ready}/${own.length}`, 7)} ${pad(d.image, 24)}`;
+  });
+  return [header, ...rows];
+}
+
+function renderJobs(s: ClusterSnapshot, scope: NsScope): string[] {
+  const filtered = inScope(s.jobs, scope);
+  const header = `${pad("NS", 10)} ${pad("NAME", 24)} ${pad("COMPLETIONS", 12)} ${pad("ACTIVE", 7)} ${pad("IMAGE", 24)}`;
+  const rows = filtered.map((j) => {
+    const own = s.pods.filter((p) => p.ownerRef === j.id);
+    const succeeded = own.filter((p) => p.phase === "Succeeded").length;
+    const active = own.filter((p) => p.phase !== "Succeeded" && p.phase !== "Terminating").length;
+    return `${pad(j.namespace, 10)} ${pad(j.name, 24)} ${pad(`${succeeded}/${j.completions}`, 12)} ${pad(String(active), 7)} ${pad(j.image, 24)}`;
+  });
+  return [header, ...rows];
+}
+
+function renderCronJobs(s: ClusterSnapshot & { tick: number }, scope: NsScope): string[] {
+  const filtered = inScope(s.cronJobs, scope);
+  const header = `${pad("NS", 10)} ${pad("NAME", 20)} ${pad("SCHEDULE", 14)} ${pad("LAST", 10)} ${pad("IMAGE", 24)}`;
+  const rows = filtered.map((c) => {
+    const last = c.lastScheduledTick > 0 ? `${s.tick - c.lastScheduledTick}t ago` : "never";
+    return `${pad(c.namespace, 10)} ${pad(c.name, 20)} ${pad(`every ${c.schedule}t`, 14)} ${pad(last, 10)} ${pad(c.image, 24)}`;
+  });
+  return [header, ...rows];
+}
+
+function renderHPA(s: ClusterSnapshot, scope: NsScope): string[] {
+  const filtered = inScope(s.hpas, scope);
+  const header = `${pad("NS", 10)} ${pad("NAME", 18)} ${pad("TARGET", 18)} ${pad("MINPODS", 8)} ${pad("MAXPODS", 8)} ${pad("REPLICAS", 9)} ${pad("CPU%/TGT", 12)}`;
+  const rows = filtered.map((h) => {
+    const dep = s.deployments.find((d) => d.name === h.targetDeployment && d.namespace === h.namespace);
+    const replicas = dep ? dep.desiredReplicas : 0;
+    const cpu = `${dep?.load ?? 0}/${h.targetCpuPercent}`;
+    return `${pad(h.namespace, 10)} ${pad(h.name, 18)} ${pad(`Deployment/${h.targetDeployment}`, 18)} ${pad(String(h.minReplicas), 8)} ${pad(String(h.maxReplicas), 8)} ${pad(String(replicas), 9)} ${pad(cpu, 12)}`;
   });
   return [header, ...rows];
 }
@@ -241,6 +339,17 @@ export function parseKubectl(
         case "svc": return renderServices(snap, scope);
         case "rs":
         case "replicasets": return renderRS(snap);
+        case "ds":
+        case "daemonset":
+        case "daemonsets": return renderDaemonSets(snap, scope);
+        case "job":
+        case "jobs": return renderJobs(snap, scope);
+        case "cronjob":
+        case "cronjobs":
+        case "cj": return renderCronJobs(snap, scope);
+        case "hpa":
+        case "horizontalpodautoscaler":
+        case "horizontalpodautoscalers": return renderHPA(snap, scope);
         case "events":
         case "ev": return renderEvents(snap);
         case "pv":
@@ -272,7 +381,12 @@ export function parseKubectl(
   if (verb === "describe") {
     const kind = tokens.shift();
     const name = tokens.shift();
-    if (kind !== "pod" || !name) return { lines: ["usage: describe pod NAME [-n NAMESPACE]"], actions: [] };
+    if ((kind === "node" || kind === "no") && name) {
+      const n = snapshot.nodes.find((x) => x.name === name);
+      if (!n) return { lines: [`node "${name}" not found`], actions: [] };
+      return { lines: describeNode(n, snapshot.pods), actions: [] };
+    }
+    if (kind !== "pod" || !name) return { lines: ["usage: describe pod|node NAME [-n NAMESPACE]"], actions: [] };
     const { scope } = nsScopeFromTokens(tokens);
     const ns = scope.ns ?? "default";
     const p = snapshot.pods.find((x) => x.name === name && (scope.all || x.namespace === ns));
@@ -306,6 +420,10 @@ export function parseKubectl(
     const ns = scope.ns;
     if (kind === "pod" || kind === "po")            return { lines: [`pod "${name}" deletion requested`], actions: [{ type: "DeletePod", name, namespace: ns }] };
     if (kind === "deployment" || kind === "deploy") return { lines: [`deployment "${name}" deletion requested`], actions: [{ type: "DeleteDeployment", name, namespace: ns }] };
+    if (kind === "daemonset" || kind === "ds")      return { lines: [`daemonset "${name}" deletion requested`], actions: [{ type: "DeleteDaemonSet", name, namespace: ns }] };
+    if (kind === "job" || kind === "jobs")          return { lines: [`job "${name}" deletion requested`], actions: [{ type: "DeleteJob", name, namespace: ns }] };
+    if (kind === "cronjob" || kind === "cj")        return { lines: [`cronjob "${name}" deletion requested`], actions: [{ type: "DeleteCronJob", name, namespace: ns }] };
+    if (kind === "hpa")                              return { lines: [`hpa "${name}" deletion requested`], actions: [{ type: "DeleteHPA", name, namespace: ns }] };
     if (kind === "pvc")                              return { lines: [`pvc "${name}" deletion requested`], actions: [{ type: "DeletePVC", name, namespace: ns }] };
     if (kind === "svc" || kind === "service")        return { lines: [`service "${name}" deletion requested`], actions: [{ type: "DeleteService", name, namespace: ns }] };
     if (kind === "ingress" || kind === "ing")        return { lines: [`ingress "${name}" deletion requested`], actions: [{ type: "DeleteIngress", name, namespace: ns }] };
@@ -387,6 +505,42 @@ export function parseKubectl(
       lines: [`service/${name} created (${type})`],
       actions: [{ type: "ApplyService", spec: { name, namespace: scope.ns, deploymentName: name, type } }],
     };
+  }
+
+  // ---- autoscale (creates an HPA) ----
+  if (verb === "autoscale") {
+    const kind = tokens.shift();
+    let name: string | undefined;
+    if (kind === "deployment" || kind === "deploy") name = tokens.shift();
+    else if (kind && kind.includes("/")) name = kind.split("/")[1];
+    if (!name) return { lines: ["usage: autoscale deployment NAME --min=N --max=M --cpu-percent=P"], actions: [] };
+    const { scope, rest } = nsScopeFromTokens(tokens);
+    const num = (flag: string, dflt: number) => {
+      const f = rest.find((t) => t.startsWith(flag));
+      const m = f?.match(/=(\d+)/);
+      return m ? parseInt(m[1], 10) : dflt;
+    };
+    const min = num("--min", 1);
+    const max = num("--max", Math.max(min, 5));
+    const cpu = num("--cpu-percent", 50);
+    return {
+      lines: [`horizontalpodautoscaler/${name} autoscaled (${min}-${max} pods, target ${cpu}% cpu)`],
+      actions: [{ type: "ApplyHPA", spec: { deploymentName: name, namespace: scope.ns, minReplicas: min, maxReplicas: max, targetCpuPercent: cpu } }],
+    };
+  }
+
+  // ---- load (SIMULATOR ONLY: inject synthetic CPU utilisation for the HPA demo) ----
+  if (verb === "load") {
+    const t0 = tokens.shift();
+    if (!t0) return { lines: ["usage (sim only): load deployment/NAME PERCENT"], actions: [] };
+    let name: string | undefined;
+    if (t0.includes("/")) name = t0.split("/")[1];
+    else if (t0 === "deployment" || t0 === "deploy") name = tokens.shift();
+    else name = t0;
+    const pct = parseInt(tokens.shift() ?? "", 10);
+    if (!name || Number.isNaN(pct)) return { lines: ["usage (sim only): load deployment/NAME PERCENT"], actions: [] };
+    const { scope } = nsScopeFromTokens(tokens);
+    return { lines: [`synthetic load on ${name} set to ${pct}% cpu`], actions: [{ type: "SetLoad", deployment: name, namespace: scope.ns, load: pct }] };
   }
 
   // ---- create ----

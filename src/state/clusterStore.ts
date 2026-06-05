@@ -13,17 +13,30 @@ export type PodPhase =
 
 export type NodeStatus = "Ready" | "NotReady" | "Cordoned";
 
+/** Compute resources. cpu in millicores (1000 = 1 core), mem in Mi. */
+export interface Resources {
+  cpu: number;
+  mem: number;
+}
+
+export const DEFAULT_REQUESTS: Resources = { cpu: 250, mem: 256 };
+export const DEFAULT_NODE_CAPACITY: Resources = { cpu: 4000, mem: 8192 };
+
 export interface K8sNode {
   id: string;
   name: string;
   role: "control-plane" | "worker";
   status: NodeStatus;
+  /** total allocatable compute the scheduler may hand out to pod requests */
+  capacity: Resources;
 }
 
 export interface PodContainer {
   name: string;
   image: string;
   ready: boolean;
+  /** resource requests the scheduler reserves on the node (defaults applied if absent) */
+  requests?: Resources;
 }
 
 export interface PodVolumeRef {
@@ -31,12 +44,17 @@ export interface PodVolumeRef {
   claimName: string;
 }
 
+export type OwnerKind = "ReplicaSet" | "DaemonSet" | "StatefulSet" | "Job";
+
 export interface K8sPod {
   id: string;
   name: string;
   namespace: string;
-  ownerRef: string | null;     // ReplicaSet id
-  deploymentId: string | null; // null for naked pods (none currently)
+  /** Kind of the controller that owns this pod. Absent == "ReplicaSet" for
+   * backwards compatibility with the original Deployment->RS->Pod model. */
+  ownerKind?: OwnerKind;
+  ownerRef: string | null;     // owning controller id (RS / DaemonSet / StatefulSet / Job)
+  deploymentId: string | null; // null for pods not owned by a Deployment
   nodeId: string | null;
   phase: PodPhase;
   restartCount: number;
@@ -83,6 +101,22 @@ export interface K8sDeployment {
   rollouts: RolloutHistoryEntry[];
   /** PVC names mounted by every pod of this deployment */
   volumeClaims: string[];
+  /** per-pod resource requests (defaults applied if absent) */
+  requests?: Resources;
+  /** synthetic average CPU utilisation as a % of requests (drives the HPA) */
+  load?: number;
+}
+
+export interface K8sHPA {
+  id: string;
+  name: string;
+  namespace: string;
+  /** name of the Deployment this autoscaler targets */
+  targetDeployment: string;
+  minReplicas: number;
+  maxReplicas: number;
+  /** target average CPU utilisation (%) the HPA tries to hold */
+  targetCpuPercent: number;
 }
 
 export interface K8sReplicaSet {
@@ -92,6 +126,44 @@ export interface K8sReplicaSet {
   desiredReplicas: number;
   /** sortable revision number for ordering rollouts */
   revision: number;
+}
+
+export interface K8sDaemonSet {
+  id: string;
+  name: string;
+  namespace: string;
+  image: string;
+  color: string;
+  templateHash: string;
+  requests?: Resources;
+}
+
+export interface K8sJob {
+  id: string;
+  name: string;
+  namespace: string;
+  image: string;
+  color: string;
+  templateHash: string;
+  /** how many pods must reach Succeeded for the Job to be complete */
+  completions: number;
+  /** derived: pods that have reached Succeeded */
+  succeeded: number;
+  requests?: Resources;
+}
+
+export interface K8sCronJob {
+  id: string;
+  name: string;
+  namespace: string;
+  image: string;
+  color: string;
+  /** fire a new Job every N ticks */
+  schedule: number;
+  /** tick at which the last Job was spawned */
+  lastScheduledTick: number;
+  completions: number;
+  requests?: Resources;
 }
 
 export interface K8sService {
@@ -180,6 +252,19 @@ export type Action =
   | { type: "SetImage"; deployment: string; namespace?: string; image: string }
   | { type: "RolloutUndo"; deployment: string; namespace?: string }
   | { type: "ApplyDeployment"; spec: DeploymentSpec }
+  // other workload controllers
+  | { type: "ApplyDaemonSet"; spec: DaemonSetSpec }
+  | { type: "DeleteDaemonSet"; name: string; namespace?: string }
+  | { type: "ApplyJob"; spec: JobSpec }
+  | { type: "DeleteJob"; name: string; namespace?: string }
+  | { type: "ApplyCronJob"; spec: CronJobSpec }
+  | { type: "DeleteCronJob"; name: string; namespace?: string }
+  // autoscaling + probes
+  | { type: "ApplyHPA"; spec: HPASpec }
+  | { type: "DeleteHPA"; name: string; namespace?: string }
+  | { type: "SetLoad"; deployment: string; namespace?: string; load: number }
+  | { type: "SetReadiness"; name: string; namespace?: string; ready: boolean }
+  | { type: "FailLiveness"; name: string; namespace?: string }
   | { type: "DrainNode"; node: string }
   | { type: "Cordon"; node: string }
   | { type: "Uncordon"; node: string }
@@ -212,8 +297,13 @@ export interface DeploymentSpec {
   color?: string;
   strategy?: Partial<DeploymentStrategy>;
   volumeClaims?: string[];
+  requests?: Resources;
 }
 
+export interface DaemonSetSpec { name: string; namespace?: string; image: string; color?: string; requests?: Resources }
+export interface JobSpec { name: string; namespace?: string; image: string; color?: string; completions?: number; requests?: Resources }
+export interface CronJobSpec { name: string; namespace?: string; image: string; color?: string; schedule: number; completions?: number; requests?: Resources }
+export interface HPASpec { name?: string; namespace?: string; deploymentName: string; minReplicas: number; maxReplicas: number; targetCpuPercent: number }
 export interface PVSpec { name: string; capacityGi: number; storageClass?: string }
 export interface PVCSpec { name: string; namespace?: string; capacityGi: number; storageClass?: string }
 export interface ConfigSpec { name: string; namespace?: string; data: Record<string, string> }
@@ -242,20 +332,20 @@ export function podNameFor(deploymentName: string, templateHash: string): string
 }
 
 export const DEPLOY_PALETTE = [
-  "#0ea5e9",
-  "#8b5cf6",
-  "#10b981",
-  "#f59e0b",
-  "#ef4444",
-  "#ec4899",
+  "#ffffff", // frontend - white
+  "#cccccc", // backend - light gray
+  "#999999",
+  "#666666",
+  "#333333",
+  "#111111",
 ];
 
 export const NS_PALETTE = [
-  "#0ea5e9",
-  "#a855f7",
-  "#10b981",
-  "#f97316",
-  "#ec4899",
+  "#111111",
+  "#555555",
+  "#777777",
+  "#999999",
+  "#cccccc",
 ];
 
 export const DEFAULT_NS = "default";
@@ -273,6 +363,10 @@ interface ClusterState {
   namespaces: K8sNamespace[];
   deployments: K8sDeployment[];
   replicaSets: K8sReplicaSet[];
+  daemonSets: K8sDaemonSet[];
+  jobs: K8sJob[];
+  cronJobs: K8sCronJob[];
+  hpas: K8sHPA[];
   pods: K8sPod[];
   services: K8sService[];
   ingresses: K8sIngress[];
@@ -299,6 +393,10 @@ export interface ClusterSnapshot {
   namespaces: K8sNamespace[];
   deployments: K8sDeployment[];
   replicaSets: K8sReplicaSet[];
+  daemonSets: K8sDaemonSet[];
+  jobs: K8sJob[];
+  cronJobs: K8sCronJob[];
+  hpas: K8sHPA[];
   pods: K8sPod[];
   services: K8sService[];
   ingresses: K8sIngress[];
@@ -314,15 +412,15 @@ export interface ClusterSnapshot {
 
 function seedCluster(): ClusterSnapshot {
   const nodes: K8sNode[] = [
-    { id: "cp-1", name: "control-plane-1", role: "control-plane", status: "Ready" },
-    { id: "node-1", name: "worker-node-1", role: "worker", status: "Ready" },
-    { id: "node-2", name: "worker-node-2", role: "worker", status: "Ready" },
-    { id: "node-3", name: "worker-node-3", role: "worker", status: "Ready" },
+    { id: "cp-1", name: "control-plane-1", role: "control-plane", status: "Ready", capacity: { cpu: 2000, mem: 4096 } },
+    { id: "node-1", name: "worker-node-1", role: "worker", status: "Ready", capacity: { ...DEFAULT_NODE_CAPACITY } },
+    { id: "node-2", name: "worker-node-2", role: "worker", status: "Ready", capacity: { ...DEFAULT_NODE_CAPACITY } },
+    { id: "node-3", name: "worker-node-3", role: "worker", status: "Ready", capacity: { ...DEFAULT_NODE_CAPACITY } },
   ];
 
   const namespaces: K8sNamespace[] = [
     { id: "ns-default", name: "default", color: NS_PALETTE[0] },
-    { id: "ns-kube-system", name: "kube-system", color: "#94a3b8" },
+    { id: "ns-kube-system", name: "kube-system", color: NS_PALETTE[1] },
     { id: "ns-apps", name: "apps", color: NS_PALETTE[2] },
   ];
 
@@ -335,7 +433,7 @@ function seedCluster(): ClusterSnapshot {
       name: "frontend",
       namespace: "default",
       desiredReplicas: 2,
-      color: "#0ea5e9",
+      color: DEPLOY_PALETTE[0],
       image: "nginx:1.25",
       strategy: { type: "RollingUpdate", maxSurge: 1, maxUnavailable: 0 },
       templateHash: feHash,
@@ -347,7 +445,7 @@ function seedCluster(): ClusterSnapshot {
       name: "backend",
       namespace: "apps",
       desiredReplicas: 2,
-      color: "#8b5cf6",
+      color: DEPLOY_PALETTE[1],
       image: "api:2.1",
       strategy: { type: "RollingUpdate", maxSurge: 1, maxUnavailable: 0 },
       templateHash: beHash,
@@ -445,7 +543,7 @@ function seedCluster(): ClusterSnapshot {
     { id: "sec-db", name: "db-creds", namespace: "apps", data: { user: "***", pass: "***" } },
   ];
 
-  return { nodes, namespaces, deployments, replicaSets, pods, services, ingresses, egressTargets, pvs, pvcs, configMaps, secrets, events: [] };
+  return { nodes, namespaces, deployments, replicaSets, daemonSets: [], jobs: [], cronJobs: [], hpas: [], pods, services, ingresses, egressTargets, pvs, pvcs, configMaps, secrets, events: [] };
 }
 
 const SEED = seedCluster();
@@ -459,6 +557,10 @@ export const useCluster = create<ClusterState>((set) => ({
   namespaces: SEED.namespaces,
   deployments: SEED.deployments,
   replicaSets: SEED.replicaSets,
+  daemonSets: SEED.daemonSets,
+  jobs: SEED.jobs,
+  cronJobs: SEED.cronJobs,
+  hpas: SEED.hpas,
   pods: SEED.pods,
   services: SEED.services,
   ingresses: SEED.ingresses,

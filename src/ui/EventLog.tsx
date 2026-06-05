@@ -22,6 +22,12 @@ const REASON_COLOR: Record<string, string> = {
   Cordoned: "#f59e0b",
   Uncordoned: "#10b981",
   Applied: "#0ea5e9",
+  Bound: "#10b981",
+  Completed: "#10b981",
+  SuccessfulCreate: "#0ea5e9",
+  SuccessfulRescale: "#a78bfa",
+  Unhealthy: "#ef4444",
+  Ready: "#10b981",
 };
 
 export function EventLog() {

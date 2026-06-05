@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import type { ThreeEvent } from "@react-three/fiber";
-import { Text } from "@react-three/drei";
+import { Edges, Text } from "@react-three/drei";
 import type { FaceId } from "../../state/store";
 import { useApp } from "../../state/store";
 import { faceMeta } from "../../content/concepts";
@@ -50,14 +50,13 @@ export function FaceFrame({ face, children }: Props) {
       >
         <planeGeometry args={[1.96, 1.96]} />
         <meshStandardMaterial
-          color={meta.color}
+          color="#ffffff"
           transparent
-          opacity={isActive ? 0.4 : hovered ? 0.25 : isDimmed ? 0.02 : 0.1}
-          roughness={0.2}
-          metalness={0.5}
-          emissive={meta.color}
-          emissiveIntensity={isActive ? 0.2 : 0.05}
+          opacity={isActive ? 0.9 : hovered ? 0.75 : isDimmed ? 0.05 : 0.55}
+          roughness={1.0}
+          metalness={0.0}
         />
+        <Edges threshold={20} color="#000000" />
       </mesh>
 
       <group position={[0, 0, 0.01]} visible={!isDimmed || isActive}>
@@ -69,11 +68,11 @@ export function FaceFrame({ face, children }: Props) {
         <Text
           fontSize={0.14}
           fontWeight={800}
-          color={meta.color}
+          color="#000000"
           anchorX="center"
           anchorY="middle"
-          outlineWidth={0.005}
-          outlineColor="#000000"
+          outlineWidth={0.008}
+          outlineColor="#ffffff"
           fillOpacity={isDimmed ? 0.3 : 1}
           outlineOpacity={isDimmed ? 0.3 : 1}
         >
@@ -82,10 +81,12 @@ export function FaceFrame({ face, children }: Props) {
         <Text
           position={[0, -0.12, 0]}
           fontSize={0.055}
-          fontWeight={400}
-          color="#94a3b8"
+          fontWeight={700}
+          color="#555555"
           anchorX="center"
           anchorY="middle"
+          outlineWidth={0.004}
+          outlineColor="#ffffff"
           fillOpacity={isDimmed ? 0.2 : 0.8}
         >
           {meta.subtitle.toUpperCase()}

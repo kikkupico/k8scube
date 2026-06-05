@@ -1,7 +1,27 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useApp } from "../state/store";
-import { useCluster } from "../state/clusterStore";
-import { faceMeta } from "../content/concepts";
+import { useCluster, DEFAULT_REQUESTS } from "../state/clusterStore";
+import { faceMeta, conceptFor } from "../content/concepts";
+
+/** Collapsible "What is this?" block driven by the concept content layer. */
+function ConceptExplainer({ kind, color }: { kind: string; color: string }) {
+  const [open, setOpen] = useState(true);
+  const info = conceptFor(kind);
+  if (!info) return null;
+  return (
+    <div className="concept-explainer">
+      <button className="concept-explainer-toggle" onClick={() => setOpen((o) => !o)} style={{ color }}>
+        {open ? "▾" : "▸"} What is a {info.title}?
+      </button>
+      {open && (
+        <div className="concept-explainer-body">
+          <p className="concept-oneliner">{info.oneLiner}</p>
+          <p className="concept-why">{info.why}</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function ConceptDrawer() {
   const activeFace = useApp((s) => s.activeFace);
@@ -17,6 +37,10 @@ export function ConceptDrawer() {
   const egressTargets = useCluster((s) => s.egressTargets);
   const deployments = useCluster((s) => s.deployments);
   const replicaSets = useCluster((s) => s.replicaSets);
+  const daemonSets = useCluster((s) => s.daemonSets);
+  const jobs = useCluster((s) => s.jobs);
+  const cronJobs = useCluster((s) => s.cronJobs);
+  const hpas = useCluster((s) => s.hpas);
   const pvs = useCluster((s) => s.pvs);
   const pvcs = useCluster((s) => s.pvcs);
   const configMaps = useCluster((s) => s.configMaps);
@@ -36,6 +60,11 @@ export function ConceptDrawer() {
   const selectedCm = useMemo(() => configMaps.find((c) => c.id === activeEntityId), [configMaps, activeEntityId]);
   const selectedSecret = useMemo(() => secrets.find((c) => c.id === activeEntityId), [secrets, activeEntityId]);
   const selectedNs = useMemo(() => namespaces.find((n) => n.id === activeEntityId), [namespaces, activeEntityId]);
+  const selectedDs = useMemo(() => daemonSets.find((d) => d.id === activeEntityId), [daemonSets, activeEntityId]);
+  const selectedJob = useMemo(() => jobs.find((j) => j.id === activeEntityId), [jobs, activeEntityId]);
+  const selectedCron = useMemo(() => cronJobs.find((c) => c.id === activeEntityId), [cronJobs, activeEntityId]);
+  const selectedHpa = useMemo(() => hpas.find((h) => h.id === activeEntityId), [hpas, activeEntityId]);
+  const selectedDeployment = useMemo(() => deployments.find((d) => d.id === activeEntityId), [deployments, activeEntityId]);
 
   const faceEntities = useMemo(() => {
     if (activeFace === "nodes") return nodes.filter((n) => n.role === "worker");
@@ -48,7 +77,25 @@ export function ConceptDrawer() {
 
   const selectedEntity =
     selectedPod ?? selectedNode ?? selectedSvc ?? selectedIngress ?? selectedEgress ??
-    selectedPv ?? selectedPvc ?? selectedCm ?? selectedSecret ?? selectedNs ?? null;
+    selectedPv ?? selectedPvc ?? selectedCm ?? selectedSecret ?? selectedNs ??
+    selectedDs ?? selectedJob ?? selectedCron ?? selectedHpa ?? selectedDeployment ?? null;
+
+  const selectedKind =
+    selectedPod ? "Pod" :
+    selectedDeployment ? "Deployment" :
+    selectedDs ? "DaemonSet" :
+    selectedJob ? "Job" :
+    selectedCron ? "CronJob" :
+    selectedHpa ? "HPA" :
+    selectedNode ? "Node" :
+    selectedSvc ? "Service" :
+    selectedIngress ? "Ingress" :
+    selectedEgress ? "EgressTarget" :
+    selectedPv ? "PersistentVolume" :
+    selectedPvc ? "PVC" :
+    selectedCm ? "ConfigMap" :
+    selectedSecret ? "Secret" :
+    selectedNs ? "Namespace" : null;
 
   return (
     <aside
@@ -71,6 +118,7 @@ export function ConceptDrawer() {
               <>
                 <button onClick={() => setActiveEntity(null)} className="back-link">← all on this face</button>
                 <h3 style={{ margin: 0, fontSize: 18, color: meta.color }}>{selectedEntity.name.toUpperCase()}</h3>
+                {selectedKind && <ConceptExplainer kind={selectedKind} color={meta.color} />}
                 <div className="entity-details">
                   <p><strong>ID:</strong> {selectedEntity.id}</p>
 
@@ -78,6 +126,17 @@ export function ConceptDrawer() {
                     <p><strong>Role:</strong> {selectedNode.role}</p>
                     <p><strong>Status:</strong> <span className={`status status-${selectedNode.status}`}>{selectedNode.status}</span></p>
                     <p><strong>Pods on node:</strong> {pods.filter((p) => p.nodeId === selectedNode.id).length}</p>
+                    {(() => {
+                      let cpu = 0, mem = 0;
+                      for (const p of pods) {
+                        if (p.nodeId !== selectedNode.id || p.phase === "Terminating") continue;
+                        for (const c of p.containers) { const r = c.requests ?? DEFAULT_REQUESTS; cpu += r.cpu; mem += r.mem; }
+                      }
+                      return <>
+                        <p><strong>CPU:</strong> {cpu}m / {selectedNode.capacity.cpu}m ({Math.round((cpu / selectedNode.capacity.cpu) * 100)}%)</p>
+                        <p><strong>Memory:</strong> {mem}Mi / {selectedNode.capacity.mem}Mi ({Math.round((mem / selectedNode.capacity.mem) * 100)}%)</p>
+                      </>;
+                    })()}
                     <div className="entity-actions">
                       {selectedNode.status !== "Cordoned" && <button onClick={() => enqueue({ type: "Cordon", node: selectedNode.name })}>Cordon</button>}
                       {selectedNode.status === "Cordoned" && <button onClick={() => enqueue({ type: "Uncordon", node: selectedNode.name })}>Uncordon</button>}
@@ -89,8 +148,9 @@ export function ConceptDrawer() {
                     <p><strong>Phase:</strong> <span className={`status status-${selectedPod.phase}`}>{selectedPod.phase}</span>{selectedPod.pendingReason ? ` (${selectedPod.pendingReason})` : ""}</p>
                     <p><strong>Namespace:</strong> <button className="xref" onClick={() => { const ns = namespaces.find((n) => n.name === selectedPod.namespace); if (ns) { setActiveFace("control-plane"); setActiveEntity(ns.id); } }}>{selectedPod.namespace}</button></p>
                     <p><strong>Node:</strong> {selectedPod.nodeId ? <button className="xref" onClick={() => { setActiveFace("nodes"); setActiveEntity(selectedPod.nodeId!); }}>{nodes.find((n) => n.id === selectedPod.nodeId)?.name}</button> : "<unscheduled>"}</p>
-                    <p><strong>Deployment:</strong> {deployments.find((d) => d.id === selectedPod.deploymentId)?.name ?? "-"}</p>
+                    <p><strong>Controller:</strong> {selectedPod.ownerKind ?? "ReplicaSet"}{selectedPod.deploymentId ? ` (deployment ${deployments.find((d) => d.id === selectedPod.deploymentId)?.name ?? "-"})` : ""}</p>
                     <p><strong>Image:</strong> {selectedPod.containers[0]?.image ?? "-"}</p>
+                    <p><strong>Requests:</strong> {(() => { const r = selectedPod.containers[0]?.requests ?? DEFAULT_REQUESTS; return `${r.cpu}m cpu, ${r.mem}Mi mem`; })()}</p>
                     <p><strong>Restart count:</strong> {selectedPod.restartCount}</p>
                     <p><strong>Owner RS:</strong> {selectedPod.ownerRef ?? "-"}</p>
                     <p><strong>Created tick:</strong> {selectedPod.createdAt}</p>
@@ -221,6 +281,85 @@ export function ConceptDrawer() {
                       </div>
                     )}
                   </>}
+
+                  {selectedDs && <>
+                    <p><strong>Namespace:</strong> {selectedDs.namespace}</p>
+                    <p><strong>Image:</strong> {selectedDs.image}</p>
+                    <p><strong>Pods (one per worker):</strong> {pods.filter((p) => p.ownerRef === selectedDs.id && p.phase !== "Terminating").length} / {nodes.filter((n) => n.role === "worker").length}</p>
+                    <ul className="endpoint-list">
+                      {pods.filter((p) => p.ownerRef === selectedDs.id && p.phase !== "Terminating").map((p) => (
+                        <li key={p.id}><button className="xref" onClick={() => { setActiveFace("pods"); setActiveEntity(p.id); }}>{p.name} ({p.phase})</button></li>
+                      ))}
+                    </ul>
+                    <div className="entity-actions">
+                      <button onClick={() => enqueue({ type: "DeleteDaemonSet", name: selectedDs.name, namespace: selectedDs.namespace })}>Delete daemonset</button>
+                    </div>
+                  </>}
+
+                  {selectedJob && <>
+                    <p><strong>Namespace:</strong> {selectedJob.namespace}</p>
+                    <p><strong>Image:</strong> {selectedJob.image}</p>
+                    <p><strong>Completions:</strong> {selectedJob.succeeded} / {selectedJob.completions}</p>
+                    <ul className="endpoint-list">
+                      {pods.filter((p) => p.ownerRef === selectedJob.id).map((p) => (
+                        <li key={p.id}><button className="xref" onClick={() => { setActiveFace("pods"); setActiveEntity(p.id); }}>{p.name} <span className={`status status-${p.phase}`}>{p.phase}</span></button></li>
+                      ))}
+                    </ul>
+                    <div className="entity-actions">
+                      <button onClick={() => enqueue({ type: "DeleteJob", name: selectedJob.name, namespace: selectedJob.namespace })}>Delete job</button>
+                    </div>
+                  </>}
+
+                  {selectedCron && <>
+                    <p><strong>Namespace:</strong> {selectedCron.namespace}</p>
+                    <p><strong>Image:</strong> {selectedCron.image}</p>
+                    <p><strong>Schedule:</strong> every {selectedCron.schedule} ticks</p>
+                    <p><strong>Spawned jobs:</strong> {jobs.filter((j) => j.name.startsWith(`${selectedCron.name}-`)).length}</p>
+                    <div className="entity-actions">
+                      <button onClick={() => enqueue({ type: "DeleteCronJob", name: selectedCron.name, namespace: selectedCron.namespace })}>Delete cronjob</button>
+                    </div>
+                  </>}
+
+                  {selectedHpa && (() => {
+                    const dep = deployments.find((d) => d.name === selectedHpa.targetDeployment && d.namespace === selectedHpa.namespace);
+                    return <>
+                      <p><strong>Namespace:</strong> {selectedHpa.namespace}</p>
+                      <p><strong>Target:</strong> Deployment/{selectedHpa.targetDeployment}</p>
+                      <p><strong>Replica range:</strong> {selectedHpa.minReplicas} – {selectedHpa.maxReplicas}</p>
+                      <p><strong>Target CPU:</strong> {selectedHpa.targetCpuPercent}%</p>
+                      <p><strong>Current CPU:</strong> {dep?.load ?? 0}%</p>
+                      <p><strong>Current replicas:</strong> {dep?.desiredReplicas ?? 0}</p>
+                      <div className="entity-actions">
+                        <button onClick={() => enqueue({ type: "SetLoad", deployment: selectedHpa.targetDeployment, namespace: selectedHpa.namespace, load: (dep?.load ?? 0) + 40 })}>+40% load</button>
+                        <button onClick={() => enqueue({ type: "SetLoad", deployment: selectedHpa.targetDeployment, namespace: selectedHpa.namespace, load: Math.max(0, (dep?.load ?? 0) - 40) })}>-40% load</button>
+                        <button onClick={() => enqueue({ type: "DeleteHPA", name: selectedHpa.name, namespace: selectedHpa.namespace })}>Delete HPA</button>
+                      </div>
+                    </>;
+                  })()}
+
+                  {selectedDeployment && (() => {
+                    const own = pods.filter((p) => p.deploymentId === selectedDeployment.id);
+                    const ready = own.filter((p) => p.phase === "Running" && p.containers.every((c) => c.ready)).length;
+                    const rss = replicaSets.filter((r) => r.deploymentId === selectedDeployment.id);
+                    return <>
+                      <p><strong>Namespace:</strong> {selectedDeployment.namespace}</p>
+                      <p><strong>Image:</strong> {selectedDeployment.image}</p>
+                      <p><strong>Ready:</strong> {ready} / {selectedDeployment.desiredReplicas}</p>
+                      <p><strong>Strategy:</strong> {selectedDeployment.strategy.type} (surge {selectedDeployment.strategy.maxSurge}, maxUnavailable {selectedDeployment.strategy.maxUnavailable})</p>
+                      <p><strong>Revisions:</strong> {selectedDeployment.rollouts.map((r) => `${r.revision}:${r.image}`).join(" → ")}</p>
+                      <p><strong>ReplicaSets:</strong> {rss.length} <span className="concept-inline-note">(a Deployment manages one ReplicaSet per rollout revision; each keeps its pods at the desired count)</span></p>
+                      <ul className="endpoint-list">
+                        {own.map((p) => (
+                          <li key={p.id}><button className="xref" onClick={() => setActiveEntity(p.id)}>{p.name} <span className={`status status-${p.phase}`}>{p.phase}</span></button></li>
+                        ))}
+                      </ul>
+                      <div className="entity-actions">
+                        <button onClick={() => enqueue({ type: "ScaleDeployment", name: selectedDeployment.name, namespace: selectedDeployment.namespace, replicas: selectedDeployment.desiredReplicas + 1 })}>Scale +1</button>
+                        <button onClick={() => enqueue({ type: "ScaleDeployment", name: selectedDeployment.name, namespace: selectedDeployment.namespace, replicas: Math.max(0, selectedDeployment.desiredReplicas - 1) })}>Scale -1</button>
+                        <button onClick={() => enqueue({ type: "DeleteDeployment", name: selectedDeployment.name, namespace: selectedDeployment.namespace })}>Delete</button>
+                      </div>
+                    </>;
+                  })()}
                 </div>
 
                 {selectedPod?.deploymentId && (
@@ -235,7 +374,9 @@ export function ConceptDrawer() {
                   const rss = replicaSets.filter((r) => r.deploymentId === d.id);
                   return (
                     <li key={d.id} className="concept-deployment">
-                      <h3 style={{ color: d.color }}>{d.name}</h3>
+                      <button className="concept-link" onClick={() => setActiveEntity(d.id)} style={{ padding: 0 }}>
+                        <h3 style={{ color: d.color }}>{d.name} <span className="concept-inline-note">— what is this?</span></h3>
+                      </button>
                       <p>ns:{d.namespace} · {ready}/{d.desiredReplicas} ready · image {d.image} · {rss.length} RS</p>
                       <div className="entity-actions">
                         <button onClick={() => enqueue({ type: "ScaleDeployment", name: d.name, namespace: d.namespace, replicas: d.desiredReplicas + 1 })}>+1</button>
@@ -254,6 +395,25 @@ export function ConceptDrawer() {
                     </li>
                   );
                 })}
+                {activeFace === "pods" && (daemonSets.length > 0 || jobs.length > 0 || cronJobs.length > 0 || hpas.length > 0) && (
+                  <li className="concept-deployment">
+                    <h3 style={{ color: "#a855f7" }}>Other workloads</h3>
+                    <ul className="pod-sublist">
+                      {daemonSets.map((d) => (
+                        <li key={d.id}><button onClick={() => setActiveEntity(d.id)} className="concept-link"><span>DaemonSet/{d.name}</span><span className="status">{pods.filter((p) => p.ownerRef === d.id && p.phase !== "Terminating").length} pods</span></button></li>
+                      ))}
+                      {jobs.map((j) => (
+                        <li key={j.id}><button onClick={() => setActiveEntity(j.id)} className="concept-link"><span>Job/{j.name}</span><span className="status">{j.succeeded}/{j.completions}</span></button></li>
+                      ))}
+                      {cronJobs.map((c) => (
+                        <li key={c.id}><button onClick={() => setActiveEntity(c.id)} className="concept-link"><span>CronJob/{c.name}</span><span className="status">every {c.schedule}t</span></button></li>
+                      ))}
+                      {hpas.map((h) => (
+                        <li key={h.id}><button onClick={() => setActiveEntity(h.id)} className="concept-link"><span>HPA/{h.name}</span><span className="status">{h.minReplicas}-{h.maxReplicas}</span></button></li>
+                      ))}
+                    </ul>
+                  </li>
+                )}
                 {(faceEntities as Array<{ id: string; name: string }>).map((e) => (
                   <li key={e.id}>
                     <button
